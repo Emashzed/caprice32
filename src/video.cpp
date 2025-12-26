@@ -95,29 +95,28 @@ int renderer_bpp(SDL_Renderer *sdl_renderer)
 // TODO: Cleanup sw_scaling if really not needed
 void compute_scale(video_plugin* t, int w, int h)
 {
-  int win_width, win_height;
-  SDL_GetWindowSize(mainSDLWindow, &win_width, &win_height);
-  if (CPC.scr_preserve_aspect_ratio != 0) {
-    float win_x_scale, win_y_scale;
-    win_x_scale = w/static_cast<float>(win_width);
-    win_y_scale = h/static_cast<float>(win_height);
-    float scale = max(win_x_scale, win_y_scale);
-    t->width=w/scale;
-    t->height=h/scale;
-    float x_offset = 0.5*(win_width-t->width);
-    float y_offset = 0.5*(win_height-t->height);
-    t->x_offset=x_offset;
-    t->y_offset=y_offset;
-    t->x_scale=scale;
-    t->y_scale=scale;
-  } else {
-    t->x_offset=0;
-    t->y_offset=0;
-    t->x_scale=w/static_cast<float>(win_width);
-    t->y_scale=h/static_cast<float>(win_height);
-    t->width = win_width;
-    t->height = win_height;
-  }
+    int win_width, win_height;
+    SDL_GetWindowSize(mainSDLWindow, &win_width, &win_height);
+
+    if (CPC.scr_preserve_aspect_ratio != 0) {
+        int scale_x = win_width  / w;
+        int scale_y = win_height / h;
+        int scale   = (scale_x < scale_y ? scale_x : scale_y);
+        if (scale < 1) scale = 1;
+        t->width  = w * scale;
+        t->height = h * scale;
+        t->x_offset = (win_width  - t->width ) / 2;
+        t->y_offset = (win_height - t->height) / 2;
+        t->x_scale = static_cast<float> (w) / static_cast<float> (t->width);
+        t->y_scale = static_cast<float> (h) / static_cast<float> (t->height);
+    } else {
+        t->x_offset = 0;
+        t->y_offset = 0;
+        t->width  = win_width;
+        t->height = win_height;
+        t->x_scale = static_cast<float> (w) / static_cast<float>(t->width);
+        t->y_scale = static_cast<float> (h) / static_cast<float>(t->height);
+    }
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1375,6 +1374,98 @@ void dotmat_flip(video_plugin* t __attribute__((unused)))
 }
 
 /* ------------------------------------------------------------------------------------ */
+/* Dot matrix video plugin ------------------------------------------------------------ */
+/* ------------------------------------------------------------------------------------ */
+static inline Uint16 rgb565_scale(Uint16 c, int num, int den)
+{
+  int r = (c >> 11) & 0x1F;
+  int g = (c >> 5)  & 0x3F;
+  int b =  c        & 0x1F;
+
+  r = (r * num) / den;
+  g = (g * num) / den;
+  b = (b * num) / den;
+
+  if (r > 0x1F) r = 0x1F;
+  if (g > 0x3F) g = 0x3F;
+  if (b > 0x1F) b = 0x1F;
+
+  return static_cast<Uint16> ((r << 11) | (g << 5) | b);
+}
+
+void filter_monitor(Uint8 *srcPtr, Uint32 srcPitch,
+                   Uint8 *dstPtr, Uint32 dstPitch,
+                   int width, int height)
+{
+  const unsigned int nextlineSrc = srcPitch / sizeof(Uint16);
+  Uint16 *p = reinterpret_cast<Uint16 *>(srcPtr);
+  const unsigned int nextlineDst = dstPitch / sizeof(Uint16);
+  Uint16 *q = reinterpret_cast<Uint16 *>(dstPtr);
+
+  // Tweak these:
+  const int GLOBAL_NUM = 9;  // global brightness boost (~112%)
+  const int GLOBAL_DEN = 8;
+  const int SCAN_NUM   = 1;  // scanline brightness (~50%)
+  const int SCAN_DEN   = 2;
+
+  while (height--) {
+    int i, ii;
+
+    for (i = 0, ii = 0; i < width; ++i, ii += 2) {
+      Uint16 A = *(p + i);
+      Uint16 B = *(p + i + 1);
+      Uint16 C = *(p + i + nextlineSrc);
+      Uint16 D = *(p + i + nextlineSrc + 1);
+
+      Uint16 topL  = A;
+      Uint16 topR  = INTERPOLATE(A, B);
+      Uint16 botL  = INTERPOLATE(A, C);
+      Uint16 botR  = Q_INTERPOLATE(A, B, C, D);
+
+      Uint16 vMidL = INTERPOLATE(topL, botL);
+      Uint16 vMidR = INTERPOLATE(topR, botR);
+
+      topL = INTERPOLATE(topL, vMidL);
+      topR = INTERPOLATE(topR, vMidR);
+
+      botL = INTERPOLATE(botL, vMidL);
+      botR = INTERPOLATE(botR, vMidR);
+
+      topL = rgb565_scale(topL, GLOBAL_NUM, GLOBAL_DEN);
+      topR = rgb565_scale(topR, GLOBAL_NUM, GLOBAL_DEN);
+      botL = rgb565_scale(botL, GLOBAL_NUM, GLOBAL_DEN);
+      botR = rgb565_scale(botR, GLOBAL_NUM, GLOBAL_DEN);
+
+      *(q + ii)                 = topL;
+      *(q + ii + 1)             = topR;
+
+      Uint16 scanL = rgb565_scale(botL, SCAN_NUM, SCAN_DEN); // ~50%
+      Uint16 scanR = rgb565_scale(botR, SCAN_NUM, SCAN_DEN);
+
+      *(q + ii + nextlineDst)     = scanL;
+      *(q + ii + nextlineDst + 1) = scanR;
+    }
+
+    p += nextlineSrc;
+    q += nextlineDst << 1;
+  }
+}
+
+void swmonitor_flip(video_plugin* t __attribute__((unused)))
+{
+  if (SDL_MUSTLOCK(scaled))
+    SDL_LockSurface(scaled);
+  SDL_Rect src;
+  SDL_Rect dst;
+  compute_rects(&src,&dst,t->half_pixels);
+  filter_monitor(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
+      static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
+  if (SDL_MUSTLOCK(scaled))
+    SDL_UnlockSurface(scaled);
+  swscale_blit(t);
+}
+
+/* ------------------------------------------------------------------------------------ */
 /* End of video plugins --------------------------------------------------------------- */
 /* ------------------------------------------------------------------------------------ */
 
@@ -1393,6 +1484,7 @@ std::vector<video_plugin> video_plugin_list =
   {"Software bilinear",       false, swscale_init,  swscale_setpal,  swbilin_flip,  swscale_close,  1,         0, 0,          0, 0, 0, 0 },
   {"Software bicubic",        false, swscale_init,  swscale_setpal,  swbicub_flip,  swscale_close,  1,         0, 0,          0, 0, 0, 0 },
   {"Dot matrix",              false, swscale_init,  swscale_setpal,  dotmat_flip,   swscale_close,  1,         0, 0,          0, 0, 0, 0 },
+  {"Monitor 2x",              false, swscale_init,  swscale_setpal,  swmonitor_flip,swscale_close,  1,         0, 0,          0, 0, 0, 0 },
 #ifdef HAVE_GL
   {"OpenGL scaling",          false, glscale_init,  glscale_setpal,  glscale_flip,  glscale_close,  0,         0, 0,          0, 0, 0, 0 },
 #endif
