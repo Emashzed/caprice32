@@ -1112,6 +1112,19 @@ int input_init ()
    return 0;
 }
 
+int is_amsdos(byte *pbData)
+{
+   word checksum = 0;
+   for (int n = 0; n < 0x43; n++) {
+      checksum += pbData[n];
+   }
+   LOG_INFO("AMSDOS checksum calculated: " << std::hex << checksum << ", expected: " << (pbData[0x43] + (pbData[0x44] << 8)) << std::dec);
+   if (checksum == (pbData[0x43] + (pbData[0x44] << 8))) {
+      return 1;
+   }
+   return 0;
+}
+
 int emulator_init ()
 {
    if (input_init()) {
@@ -1158,10 +1171,6 @@ int emulator_init ()
               fclose(pfileObject);
               return ERR_NOT_A_CPC_ROM;
             }
-            word checksum = 0;
-            for (int n = 0; n < 0x43; n++) {
-               checksum += pchRomData[n];
-            }
 
             // Check for Graduate Software ROM structure termination with $ in the header
             word gradcheck = 0;
@@ -1177,8 +1186,7 @@ int emulator_init ()
             }
             // end of Graduate accessory ROM checks
 
-
-            if (checksum == ((pchRomData[0x43] << 8) + pchRomData[0x44])) { // if the checksum matches, we got us an AMSDOS header
+            if (is_amsdos(pchRomData)) { // if the checksum matches, we got us an AMSDOS header
                if(fread(pchRomData, 128, 1, pfileObject) != 1) { // skip it
                  fclose(pfileObject);
                  return ERR_NOT_A_CPC_ROM;
@@ -1271,6 +1279,9 @@ void emulator_shutdown ()
 
 void bin_load (const std::string& filename, const size_t offset)
 {
+  size_t runAddress = offset;
+  size_t copyOffset = offset;
+
   LOG_INFO("Load " << filename << " in memory at offset 0x" << std::hex << offset);
   FILE *file;
   if ((file = fopen(filename.c_str(), "rb")) == nullptr) {
@@ -1281,23 +1292,51 @@ void bin_load (const std::string& filename, const size_t offset)
   auto closure = [&]() { fclose(file); };
   memutils::scope_exit<decltype(closure)> cs(closure); // TODO: when C++20, can become a one liner expression.
 
-  size_t ram_size = 0XFFFF; // TODO: Find a way to have the real RAM size
+  size_t ram_size = 0xFFFF; // TODO: Find a way to have the real RAM size
   size_t max_size = ram_size - offset;
-  size_t read = fread(&pbRAM[offset], 1, max_size, file);
-  if (!feof(file)) {
-    LOG_ERROR("Bin file too big to fit in memory");
-    return;
-  }
+
+  fseek(file, 0, SEEK_END);
+  long filesize = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  std::vector<byte> buf(filesize);
+  size_t read = fread(buf.data(), 1, filesize, file);
+
   if (ferror(file)) {
     LOG_ERROR("Error reading the bin file: " << ferror(file));
     return;
   }
+
   if (read == 0) {
     LOG_ERROR("Empty bin file");
     return;
   }
+
+  byte* data = buf.data();
+  if (is_amsdos(data)) {
+    LOG_INFO("Detected AMSDOS header");
+    if (read <= 128) {
+      LOG_ERROR("AMSDOS file too small to contain data");
+      return;
+    }
+    copyOffset = data[21] + (data[22] << 8);
+    LOG_INFO("AMSDOS offset: 0x" << std::hex << copyOffset);
+    runAddress = data[26] + (data[27] << 8);
+    LOG_INFO("AMSDOS runAddress: 0x" << std::hex << runAddress);
+    read -= 128;
+    data += 128;
+  }
+
+  if (read > max_size)  {
+    LOG_ERROR("Bin file too big to fit in memory");
+    return;
+  }
+
+  // Copy data to RAM
+  memcpy(&pbRAM[copyOffset], data, read);
+
   // Jump at the beginning of the program
-  z80.PC.w.l = offset;
+  z80.PC.w.l = runAddress;
   // Setup the stack the way it would be if we had launch it with run"
   z80_write_mem(--z80.SP.w.l, 0x0);
   z80_write_mem(--z80.SP.w.l, 0x98);
@@ -1306,7 +1345,6 @@ void bin_load (const std::string& filename, const size_t offset)
   z80_write_mem(--z80.SP.w.l, 0xb9);
   z80_write_mem(--z80.SP.w.l, 0xa2);
 }
-
 
 
 
