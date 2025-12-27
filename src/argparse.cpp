@@ -15,6 +15,11 @@
 
 const struct option long_options[] =
 {
+#ifdef DEBUG
+#ifdef _WIN32
+   {"console",  no_argument, nullptr, 'C'},
+#endif
+#endif
    {"autocmd",  required_argument, nullptr, 'a'},
    {"cfg_file", required_argument, nullptr, 'c'},
    {"inject", required_argument, nullptr, 'i'},
@@ -35,6 +40,11 @@ void usage(std::ostream &os, char *progPath, int errcode)
 
    os << "Usage: " << progname << " [options] <slotfile(s)>\n";
    os << "\nSupported options are:\n";
+#ifdef DEBUG
+#ifdef _WIN32
+   os << "   -C/--console:           open console for debug info.\n";
+#endif
+#endif
    os << "   -a/--autocmd=<command>: execute command as soon as the emulator starts.\n";
    os << "   -c/--cfg_file=<file>:   use <file> as the emulator configuration file instead of the default.\n";
    os << "   -h/--help:              shows this help\n";
@@ -102,7 +112,7 @@ void parseArguments(int argc, char **argv, std::vector<std::string>& slot_list, 
 
    optind = 0; // To please test framework, when this function is called multiple times !
    while(true) {
-      c = getopt_long (argc, argv, "a:c:hi:o:O:s:vV",
+      c = getopt_long (argc, argv, "a:cC:hi:o:O:s:vV",
                        long_options, &option_index);
       // Logs before processing of the -v will not be visible.
       LOG_DEBUG("Next option: " << c << "(" << static_cast<char>(c) << ")");
@@ -113,6 +123,14 @@ void parseArguments(int argc, char **argv, std::vector<std::string>& slot_list, 
 
       switch (c)
       {
+#ifdef DEBUG
+#ifdef _WIN32
+         case 'C':
+            args.openConsole = true;
+            break;
+#endif
+#endif
+
          case 'a':
             LOG_VERBOSE("Append to autocmd: " << optarg);
             args.autocmd += replaceCap32Keys(optarg);

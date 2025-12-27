@@ -6,7 +6,7 @@
 #include "wg_error.h"
 
 bool DevTools::Activate(int scale) {
-  ShowCursor(true);
+  ShowMouseCursor(true);
   try {
     // TODO: This position only makes sense for me. Ideally we would probably want to find where current window is, find display size and place
     // the window where there's the most space available. On the other hand, getting display size is not very reliable on multi-screen setups under linux ...
@@ -30,7 +30,7 @@ bool DevTools::Activate(int scale) {
 }
 
 void DevTools::Deactivate() {
-  ShowCursor(false);
+  ShowMouseCursor(false);
   devToolsView = nullptr;
   capriceGui = nullptr;
   if (texture) SDL_DestroyTexture(texture);

@@ -24,6 +24,10 @@
 #include <thread>
 #include <filesystem>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "SDL.h"
 
 #include "cap32.h"
@@ -1580,7 +1584,7 @@ void video_set_style ()
 void mouse_init ()
 {
   // hide the mouse cursor unless we emulate phazer
-  ShowCursor(CPC.phazer_emulation);
+  ShowMouseCursor(CPC.phazer_emulation);
 }
 
 
@@ -1941,7 +1945,7 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
 // As long as a GUI is enabled, we must show the cursor.
 // Because we can activate multiple GUIs at a time, we need to keep track of how
 // many times we've been asked to show or hide cursor.
-void ShowCursor(bool show)
+void ShowMouseCursor(bool show)
 {
   static int shows_count = 1;
   if (show) {
@@ -1962,7 +1966,7 @@ SDL_Surface* prepareShowUI()
 {
    audio_pause();
    CPC.scr_gui_is_currently_on = true;
-   ShowCursor(true);
+   ShowMouseCursor(true);
    // guiBackSurface will allow the GUI to capture the current frame
    SDL_Surface* guiBackSurface(SDL_CreateRGBSurface(0, back_surface->w, back_surface->h, 32, 0x000000FF, 0x0000FF00, 0x00FF0000, 0x00000000));
    SDL_BlitSurface(back_surface, nullptr, guiBackSurface, nullptr);
@@ -1974,7 +1978,7 @@ void cleanupShowUI(SDL_Surface* guiBackSurface)
    SDL_FreeSurface(guiBackSurface);
    // Clear SDL surface:
    SDL_FillRect(back_surface, nullptr, SDL_MapRGB(back_surface->format, 0, 0, 0));
-   ShowCursor(false);
+   ShowMouseCursor(false);
    CPC.scr_gui_is_currently_on = false;
    audio_resume();
 }
@@ -2686,6 +2690,18 @@ int cap32_main (int argc, char **argv)
      binPath = std::filesystem::absolute(".");
    }
    parseArguments(argc, argv, slot_list, args);
+
+#ifdef DEBUG
+#ifdef _WIN32
+    if (args.openConsole) {
+        AllocConsole();
+        FILE* f;
+        freopen_s(&f, "CONOUT$", "w", stdout);
+        freopen_s(&f, "CONOUT$", "w", stderr);
+        freopen_s(&f, "CONIN$",  "r", stdin);
+    }
+#endif
+#endif
 
    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER | SDL_INIT_NOPARACHUTE) < 0) { // initialize SDL
       fprintf(stderr, "SDL_Init() failed: %s\n", SDL_GetError());
