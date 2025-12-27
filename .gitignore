@@ -1,5 +1,7 @@
+/.idea
 /obj
 /cap32
+/cap32.exe
 /printer.dat
 /wGui.log
 /tags
@@ -10,6 +12,7 @@
 /screenshots
 /release
 .pc
+*.iml
 debian/caprice32.debhelper.log
 debian/caprice32.postinst.debhelper
 debian/caprice32.postrm.debhelper
