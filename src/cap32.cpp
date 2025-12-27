@@ -1370,11 +1370,55 @@ void printer_stop ()
 
 
 
+struct LowPassFilter {
+    float yL;   // last output left
+    float yR;   // last output right
+    float a;    // alpha
+};
+
+LowPassFilter lowPassFilter;
+
+static inline void lpf_init(float cutoff_hz, float sample_rate)
+{
+    float x = -2.0f * 3.1415926535f * cutoff_hz / sample_rate;
+    lowPassFilter.a = 1.0f - expf(x);
+    if (lowPassFilter.a < 0.0f) lowPassFilter.a = 0.0f;
+    if (lowPassFilter.a > 1.0f) lowPassFilter.a = 1.0f;
+    lowPassFilter.yL = 0.0f;
+    lowPassFilter.yR = 0.0f;
+    LOG_INFO("Initialized Low Pass Filter " << cutoff_hz << " Hz");
+}
+
+static inline void lpf_process_sample(int16_t *left, int16_t *right)
+{
+    float xL = static_cast<float> (*left);
+    float xR = static_cast<float> (*right);
+
+    lowPassFilter.yL = lowPassFilter.yL + lowPassFilter.a * (xL - lowPassFilter.yL);
+    lowPassFilter.yR = lowPassFilter.yR + lowPassFilter.a * (xR - lowPassFilter.yR);
+
+    *left  = static_cast<int16_t> (lowPassFilter.yL);
+    *right = static_cast<int16_t> (lowPassFilter.yR);
+}
+
 void audio_update (void *userdata __attribute__((unused)), byte *stream, int len)
 {
+  int16_t *pSamples = reinterpret_cast<int16_t *>(pbSndBuffer.get());
   if (CPC.snd_ready) {
-    //LOG_VERBOSE("Audio: audio_update: copying " << len << " bytes");
-    memcpy(stream, pbSndBuffer.get(), len);
+    if (CPC.snd_filtering && CPC.snd_bits) {
+      if (CPC.snd_stereo) {
+        int sampleCount = len / 4; // 4 bytes per stereo sample (2 bytes left, 2 bytes right)
+        for (int i = 0; i < sampleCount; i++) {
+          lpf_process_sample(&pSamples[i * 2], &pSamples[i * 2 + 1]);
+        }
+      } else {
+        int sampleCount = len / 2; // 2 bytes per mono sample
+        for (int i = 0; i < sampleCount; i++) {
+          lpf_process_sample(&pSamples[i], &pSamples[i]); // process mono sample as both left and right
+        }
+      }
+    }
+    memcpy(stream, pSamples, len);
     dwSndBufferCopied = 1;
   } else {
     LOG_VERBOSE("Audio: audio_update: skipping the copy of " << len << " bytes: sound buffer not ready");
@@ -1391,7 +1435,6 @@ int audio_align_samples (int given)
    }
    return actual; // return the closest match as 2^n
 }
-
 
 
 
@@ -1425,6 +1468,18 @@ int audio_init ()
 
    LOG_VERBOSE("Audio: Desired: Freq: " << desired.freq << ", Format: " << desired.format << ", Channels: " << static_cast<int>(desired.channels) << ", Samples: " << desired.samples << ", Size: " << desired.size);
    LOG_VERBOSE("Audio: Obtained: Freq: " << obtained.freq << ", Format: " << obtained.format << ", Channels: " << static_cast<int>(obtained.channels) << ", Samples: " << obtained.samples << ", Size: " << obtained.size);
+
+   switch (CPC.snd_filtering) {
+		case 1:
+			lpf_init(4000, obtained.freq);
+			break;
+		case 2:
+			lpf_init(2500, obtained.freq);
+			break;
+		case 3:
+			lpf_init(1500, obtained.freq);
+			break;
+   }
 
    CPC.snd_buffersize = obtained.size; // size is samples * channels * bytes per sample (1 or 2)
    pbSndBuffer = std::make_unique<byte[]>(CPC.snd_buffersize); // allocate the sound data buffer
@@ -1867,6 +1922,10 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
       CPC.snd_volume = 80;
    }
    CPC.snd_pp_device = conf.getIntValue("sound", "pp_device", 0) & 1;
+   CPC.snd_filtering = conf.getIntValue("sound", "filtering", 0);
+   if (CPC.snd_filtering > 3) {
+      CPC.snd_filtering = 0;
+   }
 
    CPC.kbd_layout = conf.getStringValue("control", "kbd_layout", "keymap_us.map");
 
@@ -1950,6 +2009,7 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
    conf.setIntValue("sound", "stereo", CPC.snd_stereo);
    conf.setIntValue("sound", "volume", CPC.snd_volume);
    conf.setIntValue("sound", "pp_device", CPC.snd_pp_device);
+   conf.setIntValue("sound", "filtering", CPC.snd_filtering);
 
    conf.setStringValue("control", "kbd_layout", CPC.kbd_layout);
 

@@ -243,6 +243,7 @@ class t_CPC {
    unsigned int snd_enabled;
    bool snd_ready;
    unsigned int snd_playback_rate;
+   unsigned int snd_filtering;
    unsigned int snd_bits;
    unsigned int snd_stereo;
    unsigned int snd_volume;
