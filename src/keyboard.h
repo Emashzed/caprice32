@@ -148,6 +148,7 @@ typedef enum {
    CPC_CTRL_DOWN,
    CPC_CTRL_LEFT,
    CPC_CTRL_RIGHT,
+   CPC_CTRL_ENTER,
    CPC_AMPERSAND,
    CPC_ASTERISK,
    CPC_AT,
@@ -257,7 +258,7 @@ typedef enum {
    CPC_FR_uGRAVE
 } CPC_KEYS;
 
-#define CPC_KEY_NUM 209    // Number of different keys on a CPC keyboard
+#define CPC_KEY_NUM 210    // Number of different keys on a CPC keyboard
 #define CPC_KEYBOARD_NUM 3 // Number of different keyboards supported.
 
 // PCKey represents a key combination pressed on the host keyboard.
