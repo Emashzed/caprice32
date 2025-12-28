@@ -1403,6 +1403,11 @@ static inline void lpf_process_sample(int16_t *left, int16_t *right)
 
 void audio_update (void *userdata __attribute__((unused)), byte *stream, int len)
 {
+  if (CPC.paused) {
+    memset(stream, 0, len);
+    return;
+  }
+
   int16_t *pSamples = reinterpret_cast<int16_t *>(pbSndBuffer.get());
   if (CPC.snd_ready) {
     if (CPC.snd_filtering && CPC.snd_bits) {
@@ -2121,6 +2126,7 @@ void showVKeyboard()
 
 void showGui()
 {
+   cpc_pause();
    auto guiBackSurface = prepareShowUI();
    try {
       CapriceGui capriceGui(mainSDLWindow, /*bInMainView=*/true);
@@ -2151,6 +2157,7 @@ void showGui()
       std::cout << "Failed displaying the GUI: " << e.what() << std::endl;
    }
    cleanupShowUI(guiBackSurface);
+   cpc_resume();
 }
 
 // TODO: Dedupe with the version in CapriceDevTools
