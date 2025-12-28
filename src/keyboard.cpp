@@ -1640,6 +1640,15 @@ CPCScancode InputMapper::CPCscancodeFromJoystickButton(SDL_JoyButtonEvent jbutto
     return cpc_key;
 }
 
+void InputMapper::CPCscancodeFromJoystickHat(SDL_JoyHatEvent hat, bool *directions)
+{
+  LOG_INFO("Hat event: hat=" << static_cast<int>(hat.hat) << " value=" << static_cast<int>(hat.value));
+  directions[0] = hat.value & SDL_HAT_UP;
+  directions[1] = hat.value & SDL_HAT_DOWN;
+  directions[2] = hat.value & SDL_HAT_LEFT;
+  directions[3] = hat.value & SDL_HAT_RIGHT;
+}
+
 void InputMapper::CPCscancodeFromJoystickAxis(SDL_JoyAxisEvent jaxis, CPCScancode *cpc_key, bool &release)
 {
    switch(jaxis.axis) {

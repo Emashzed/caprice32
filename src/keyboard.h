@@ -313,6 +313,7 @@ class InputMapper {
     std::string CPCkeyToString(const CapriceKey cpc_key);
     CPCScancode CPCscancodeFromJoystickButton(SDL_JoyButtonEvent jbutton);
     void CPCscancodeFromJoystickAxis(SDL_JoyAxisEvent jaxis, CPCScancode *cpc_key, bool &release);
+    void CPCscancodeFromJoystickHat(SDL_JoyHatEvent hat, bool *directions);
     std::list<SDL_Event> StringToEvents(std::string toTranslate);
     void set_joystick_emulation();
 };

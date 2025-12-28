@@ -3148,6 +3148,18 @@ int cap32_main (int argc, char **argv)
             }
             break;
 
+            case SDL_JOYHATMOTION:
+            {
+              //                   Up     Down   Left   Right
+              bool scancodes[4] = {false, false, false, false};
+              CPC.InputMapper->CPCscancodeFromJoystickHat(event.jhat, scancodes);
+              applyKeypress(CPC.InputMapper->CPCscancodeFromCPCkey(CPC_J0_UP), keyboard_matrix, scancodes[0]);
+              applyKeypress(CPC.InputMapper->CPCscancodeFromCPCkey(CPC_J0_DOWN), keyboard_matrix, scancodes[1]);
+              applyKeypress(CPC.InputMapper->CPCscancodeFromCPCkey(CPC_J0_LEFT), keyboard_matrix, scancodes[2]);
+              applyKeypress(CPC.InputMapper->CPCscancodeFromCPCkey(CPC_J0_RIGHT), keyboard_matrix, scancodes[3]);
+            }
+            break;
+
             case SDL_MOUSEMOTION:
             {
               CPC.phazer_x = (event.motion.x-vid_plugin->x_offset) * vid_plugin->x_scale;
