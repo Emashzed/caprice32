@@ -91,6 +91,11 @@ RELEASE_DIR = release
 ARCHIVE = cap32-$(ARCH)
 ARCHIVE_DIR = $(RELEASE_DIR)/$(ARCHIVE)
 
+ifeq ($(PLATFORM),windows)
+WINDRES ?= windres
+RESOBJ  := $(OBJDIR)/cap32_res.o
+endif
+
 HTML_DOC:=doc/man.html
 GROFF_DOC:=doc/man6/cap32.6
 
@@ -155,6 +160,12 @@ $(OBJECTS): $(OBJDIR)/%.o: %.cpp
 	@mkdir -p `dirname $@`
 	$(CXX) -c $(BUILD_FLAGS) $(ALL_CFLAGS) -o $@ $<
 
+ifeq ($(PLATFORM),windows)
+$(RESOBJ): resources/caprice32.rc resources/resource.h resources/caprice32.ico
+	@mkdir -p `dirname $@`
+	$(WINDRES) -i resources/caprice32.rc -o $(RESOBJ)
+endif
+
 debug: debug_flag tags distrib unit_test
 
 debug_flag:
@@ -186,8 +197,8 @@ $(HTML_DOC): $(GROFF_DOC)
 cap32.cfg: cap32.cfg.tmpl
 	@sed 's/__SHARE_PATH__.*//' cap32.cfg.tmpl > cap32.cfg
 
-$(TARGET): $(OBJECTS) $(MAIN) cap32.cfg
-	$(CXX) $(LDFLAGS) -o $(TARGET) $(OBJECTS) $(MAIN) $(LIBS)
+$(TARGET): $(OBJECTS) $(MAIN) cap32.cfg $(RESOBJ)
+	$(CXX) $(LDFLAGS) -o $(TARGET) $(OBJECTS) $(MAIN) $(RESOBJ) $(LIBS)
 
 ifeq ($(PLATFORM),windows)
 DLLS = SDL2.dll libbz2-1.dll libfreetype-6.dll libpng16-16.dll libstdc++-6.dll \
