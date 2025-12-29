@@ -761,6 +761,82 @@ void tape_eject ()
   pbTapeImage.clear();
 }
 
+#define RLE_CTRL 0xE5
+uint8_t *rle_decode(const byte *in, size_t in_len, size_t expected_out_len)
+{
+    if (!in || expected_out_len == 0)
+        return NULL;
+
+    byte *out = new byte [expected_out_len];
+    if (!out)
+        return NULL;
+
+    size_t ip = 0;  // input index
+    size_t op = 0;  // output index
+
+    while (ip < in_len) {
+        byte b = in[ip++];
+
+        if (b != RLE_CTRL) {
+            // Literal non-control byte
+            if (op >= expected_out_len) {
+                delete [] out;
+                return NULL; // overflow
+            }
+            out[op++] = b;
+        } else {
+            // Control byte
+            if (ip >= in_len) {
+                delete [] out;
+                return NULL; // missing count
+            }
+
+            byte count = in[ip++];
+            if (count == 0) {
+                // Literal 0xE5
+                if (op >= expected_out_len) {
+                    delete [] out;
+                    return NULL;
+                }
+                out[op++] = RLE_CTRL;
+            } else {
+                // Run: E5, count, value
+                if (ip >= in_len) {
+                    delete [] out;
+                    return NULL; // missing value byte
+                }
+
+                byte value = in[ip++];
+                if (op + count > expected_out_len) {
+                    delete [] out;
+                    return NULL; // overflow
+                }
+
+                for (byte i = 0; i < count; ++i) {
+                    out[op++] = value;
+                }
+            }
+        }
+    }
+
+    // Enforce exact size:
+    if (op != expected_out_len) {
+        delete [] out;
+        return NULL;
+    }
+    return out;
+}
+
+void realloc_cpc_ram(dword new_size_kb)
+{
+    byte *pbTemp;
+    pbTemp = new byte [new_size_kb*1024 + 1];
+    delete [] pbRAMbuffer;
+    CPC.ram_size = new_size_kb;
+    pbRAMbuffer = pbTemp;
+    pbRAM = pbRAMbuffer + 1;
+}
+
 int snapshot_load (FILE *pfile)
 {
   int n;
@@ -780,26 +856,88 @@ int snapshot_load (FILE *pfile)
   }
   dwSnapSize = sh.ram_size[0] + (sh.ram_size[1] * 256); // memory dump size
   dwSnapSize &= ~0x3f; // limit to multiples of 64
-  if (!dwSnapSize) {
-    LOG_ERROR("Error loading snapshot: zero size");
-    return ERR_SNA_SIZE;
-  }
-  if (dwSnapSize > CPC.ram_size) { // memory dump size differs from current RAM size?
-    byte *pbTemp;
 
-    pbTemp = new byte [dwSnapSize*1024 + 1];
-    delete [] pbRAMbuffer;
-    CPC.ram_size = dwSnapSize;
-    pbRAMbuffer = pbTemp;
-    // Ensure 1 byte is available before pbRAM as prerender_normal*_plus can read it
-    pbRAM = pbRAMbuffer + 1;
+  // If switching to 6128 mode, be sure to have enough RAM
+  if (sh.version >= 2 && sh.cpc_model == 2 && CPC.ram_size < 128) { 
+      realloc_cpc_ram(128);
   }
+
   emulator_reset();
-  n = fread(pbRAM, dwSnapSize*1024, 1, pfile); // read memory dump into CPC RAM
-  if (!n) {
-    emulator_reset();
-    LOG_ERROR("Error loading snapshot: couldn't read RAM");
-    return ERR_SNA_INVALID;
+
+  // if snap size is non zero, that means we have to read RAM contents straight from the file
+  if (dwSnapSize) {
+   LOG_INFO("Reading RAM dump");
+   if (dwSnapSize > CPC.ram_size) { // memory dump size differs from current RAM size?
+      realloc_cpc_ram(dwSnapSize);
+   }
+   n = fread(pbRAM, dwSnapSize*1024, 1, pfile); // read memory dump into CPC RAM
+   if (!n) {
+      LOG_ERROR("Error loading snapshot: couldn't read RAM");
+      return ERR_SNA_INVALID;
+   }
+  }
+
+  // now we need to process chunks
+  while (!feof(pfile)) {
+    dword chunk_id;
+    dword chunk_size;
+
+    n = fread(&chunk_id, 4, 1, pfile); // read chunk ID
+    if (n != 1) {
+      break; // no more chunks
+    }
+    LOG_INFO("Processing chunk ID " << std::hex << chunk_id);
+    n = fread(&chunk_size, 4, 1, pfile); // read chunk size
+    if (n != 1) {
+      LOG_ERROR("Error loading snapshot: couldn't read chunk size");
+      return ERR_SNA_INVALID;
+    }
+    LOG_INFO("Chunk size: " << std::dec << chunk_size);
+    byte *pbChunkData = new byte[chunk_size];
+    n = fread(pbChunkData, chunk_size, 1, pfile); // read chunk data
+    if (n != 1) {
+      delete [] pbChunkData;
+      LOG_ERROR("Error loading snapshot: couldn't read MEM0 chunk data");
+      return ERR_SNA_INVALID;
+    }
+    switch (chunk_id) {
+      case 0x304d454d: // "MEM0" chunk (first 64KB of RAM)
+        LOG_INFO("Processing MEM0 chunk");
+        if (chunk_size != 65536) {
+          byte *pbDecoded = rle_decode(pbChunkData, chunk_size, 65536);
+          if (pbDecoded == NULL) {
+            delete [] pbChunkData;
+            LOG_ERROR("Error loading snapshot: couldn't decode MEM0 chunk data");
+            return ERR_SNA_INVALID;
+          } else {
+            delete [] pbChunkData;
+            pbChunkData = pbDecoded;
+          }
+        }
+        memcpy(pbRAM, pbChunkData, 65536);
+        delete [] pbChunkData;
+        break;
+      case 0x314d454d: // "MEM1" chunk (second 64KB of RAM)
+        LOG_INFO("Processing MEM1 chunk");
+        if (chunk_size != 65536) {
+          byte *pbDecoded = rle_decode(pbChunkData, chunk_size, 65536);
+          if (pbDecoded == NULL) {
+            delete [] pbChunkData;
+            LOG_ERROR("Error loading snapshot: couldn't decode MEM0 chunk data");
+            return ERR_SNA_INVALID;
+          } else {
+            delete [] pbChunkData;
+            pbChunkData = pbDecoded;
+          }
+        }
+        memcpy(pbRAM + 65536, pbChunkData, 65536);
+        delete [] pbChunkData;
+        break;
+      default:
+        LOG_WARNING("Skipping unknown chunk");
+        delete [] pbChunkData;
+        break;
+    }
   }
 
   // Z80
