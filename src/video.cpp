@@ -1173,17 +1173,29 @@ void filter_bilinear(Uint8 *srcPtr, Uint32 srcPitch,
   unsigned int nextlineDst = dstPitch / sizeof(Uint16);
   Uint16 *q = reinterpret_cast<Uint16 *>(dstPtr);
 
-  while(height--) {
-    int i, ii;
-    for(i = 0, ii = 0; i < width; ++i, ii += 2) {
-      Uint16 A = *(p + i);
-      Uint16 B = *(p + i + 1);
-      Uint16 C = *(p + i + nextlineSrc);
-      Uint16 D = *(p + i + nextlineSrc + 1);
-      *(q + ii) = A;
-      *(q + ii + 1) = INTERPOLATE(A, B);
-      *(q + ii + nextlineDst) = INTERPOLATE(A, C);
-      *(q + ii + nextlineDst + 1) = Q_INTERPOLATE(A, B, C, D);
+  for (int line = 0; line < height; line++ ) {
+    if (line == height - 1) {
+      // Last line: just duplicate
+      for (int i = 0, ii = 0; i < width; ++i, ii += 2) {
+        Uint16 A = *(p + i);
+        *(q + ii) = A;
+        *(q + ii + 1) = A;
+        *(q + ii + nextlineDst) = A;
+        *(q + ii + nextlineDst + 1) = A;
+      }
+      break;
+    } else {
+      int i, ii;
+      for(i = 0, ii = 0; i < width; ++i, ii += 2) {
+        Uint16 A = *(p + i);
+        Uint16 B = *(p + i + 1);
+        Uint16 C = *(p + i + nextlineSrc);
+        Uint16 D = *(p + i + nextlineSrc + 1);
+        *(q + ii) = A;
+        *(q + ii + 1) = INTERPOLATE(A, B);
+        *(q + ii + nextlineDst) = INTERPOLATE(A, C);
+        *(q + ii + nextlineDst + 1) = Q_INTERPOLATE(A, B, C, D);
+      }
     }
     p += nextlineSrc;
     q += nextlineDst << 1;
@@ -1197,7 +1209,7 @@ void swbilin_flip(video_plugin* t __attribute__((unused)))
   SDL_Rect src;
   SDL_Rect dst;
   compute_rects(&src,&dst);
-  filter_bilinear(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
+  filter_bilinear(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
