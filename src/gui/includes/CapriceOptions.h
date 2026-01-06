@@ -92,6 +92,10 @@ namespace wGui
       CLabel* m_pLabelVideoPlugin;
       CDropDown* m_pDropDownVideoScale;  // Select video scale factor
       CLabel* m_pLabelVideoScale;
+      CCheckBox* m_pCheckBoxHalfResX;  // 'Half horizontal resolution'
+      CLabel* m_pLabelHalfResX;
+      CCheckBox* m_pCheckBoxHalfResY;  // 'Half vertical resolution'
+      CLabel* m_pLabelHalfResY;
 
       // Audio options
       CCheckBox* m_pCheckBoxEnableSound;    // Show emulation speed
