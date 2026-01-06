@@ -36,8 +36,18 @@ extern t_CPC CPC;
 // Video plugin, defined in video.h:
 extern video_plugin* vid_plugin;
 
+float scale_x, scale_y;
+
 namespace wGui
 {
+
+static int scaleX(int x) {
+  return  static_cast<int> (static_cast<float> (x) / scale_x);
+}
+
+static int scaleY(int y) {
+  return  static_cast<int> (static_cast<float> (y) / scale_y);
+}
 
 bool CApplication::HandleSDLEvent(SDL_Event event)
 {
@@ -112,14 +122,8 @@ bool CApplication::HandleSDLEvent(SDL_Event event)
 		break;
 	case SDL_MOUSEBUTTONDOWN:
     {
-      int x(event.button.x), y(event.button.y);
-      if (m_bInMainView) {
-        x = (event.button.x-vid_plugin->x_offset)*vid_plugin->x_scale;
-        y = (event.button.y-vid_plugin->y_offset)*vid_plugin->y_scale;
-      } else {
-        x = event.button.x/m_iScale;
-        y = event.button.y/m_iScale;
-      }
+      int x = scaleX(event.button.x);
+      int y = scaleY(event.button.y);
       MessageServer()->QueueMessage(new CMouseMessage(
             CMessage::MOUSE_BUTTONDOWN, GetMouseFocus(), this, CPoint(x, y), CPoint(),
             CMouseMessage::TranslateSDLButton(event.button.button)));
@@ -127,14 +131,8 @@ bool CApplication::HandleSDLEvent(SDL_Event event)
     }
 	case SDL_MOUSEBUTTONUP:
     {
-      int x(event.button.x), y(event.button.y);
-      if (m_bInMainView) {
-        x = (event.button.x-vid_plugin->x_offset)*vid_plugin->x_scale;
-        y = (event.button.y-vid_plugin->y_offset)*vid_plugin->y_scale;
-      } else {
-        x = event.button.x/m_iScale;
-        y = event.button.y/m_iScale;
-      }
+      int x = scaleX(event.button.x);
+      int y = scaleY(event.button.y);
       MessageServer()->QueueMessage(new CMouseMessage(
             CMessage::MOUSE_BUTTONUP, GetMouseFocus(), this, CPoint(x, y), CPoint(),
             CMouseMessage::TranslateSDLButton(event.button.button)));
@@ -148,15 +146,8 @@ bool CApplication::HandleSDLEvent(SDL_Event event)
       } else {
         wheeldirection = CMouseMessage::WHEELDOWN;
       }
-      int x, y;
-      SDL_GetMouseState(&x, &y);
-      if (m_bInMainView) {
-        x = (x-vid_plugin->x_offset)*vid_plugin->x_scale;
-        y = (y-vid_plugin->y_offset)*vid_plugin->y_scale;
-      } else {
-        x = event.button.x/m_iScale;
-        y = event.button.y/m_iScale;
-      }
+      int x = scaleX(event.wheel.x);
+      int y = scaleY(event.wheel.y);
       MessageServer()->QueueMessage(new CMouseMessage(
             CMessage::MOUSE_BUTTONDOWN, GetMouseFocus(), this, CPoint(x, y), CPoint(),
             wheeldirection));
@@ -164,14 +155,8 @@ bool CApplication::HandleSDLEvent(SDL_Event event)
     }
 	case SDL_MOUSEMOTION:
     {
-      int x(event.motion.x), y(event.motion.y);
-      if (m_bInMainView) {
-        x = (event.motion.x-vid_plugin->x_offset)*vid_plugin->x_scale;
-        y = (event.motion.y-vid_plugin->y_offset)*vid_plugin->y_scale;
-      } else {
-        x = event.button.x/m_iScale;
-        y = event.button.y/m_iScale;
-      }
+      int x = scaleX(event.motion.x);
+      int y = scaleY(event.motion.y);
       MessageServer()->QueueMessage(new CMouseMessage(
             CMessage::MOUSE_MOVE, GetMouseFocus(), this, CPoint(x, y), CPoint(),
             CMouseMessage::TranslateSDLButtonState(event.motion.state)));
@@ -278,6 +263,16 @@ CApplication::CApplication(SDL_Window* pWindow, std::string sFontFileName) :
 	m_pCurrentCursorResourceHandle(nullptr),
 	m_pSystemDefaultCursor(nullptr)
 {
+  int window_width;
+  int window_height;
+  SDL_GetWindowSize(pWindow, &window_width, &window_height);
+
+  int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
+  int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
+
+  scale_x = static_cast<float>(window_width) / static_cast<float>(surface_width);
+  scale_y = static_cast<float>(window_height) / static_cast<float>(surface_height);
+
   m_pMessageServer = std::make_unique<CMessageServer>();
 
 	// judb
