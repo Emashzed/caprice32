@@ -855,14 +855,17 @@ void filter_scale2x(Uint8 *srcPtr, Uint32 srcPitch,
   unsigned int nextlineDst = dstPitch / sizeof(short);
   short *q = reinterpret_cast<short *>(dstPtr);
 
-  while(height--) {
-    int i = 0, j = 0;
-    for(i = 0; i < width; ++i, j += 2) {
-      short B = *(p + i - nextlineSrc);
-      short D = *(p + i - 1);
-      short E = *(p + i);
-      short F = *(p + i + 1);
-      short H = *(p + i + nextlineSrc);
+  int lastLine = height - 1;
+  int lastRow = width - 1;
+
+  for (int line = 0; line < height; line++)
+  {
+    for(int i = 0, j = 0; i < width; i++, j += 2) {
+      short E = *(p + i);                                         // center pixel
+      short D = i == 0 ? E : *(p + i - 1);                        // left pixel
+      short F = i == lastRow ? E : *(p + i + 1);                  // right pixel
+      short B = line == 0 ? E : *(p + i - nextlineSrc);           // top pixel
+      short H = line == lastLine ? E : *(p + i + nextlineSrc);    // bottom pixel
 
       *(q + j) = D == B && B != F && D != H ? D : E;
       *(q + j + 1) = B == F && B != D && F != H ? F : E;
@@ -881,7 +884,7 @@ void scale2x_flip(video_plugin* t __attribute__((unused)))
   SDL_Rect src;
   SDL_Rect dst;
   compute_rects(&src,&dst);
-  filter_scale2x(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
+  filter_scale2x(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch), pub->pitch,
      static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
