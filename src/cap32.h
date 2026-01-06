@@ -213,6 +213,8 @@ class t_CPC {
 
    unsigned int scr_style;
    unsigned int scr_scale;
+   unsigned int scr_half_res_x;
+   unsigned int scr_half_res_y;
    unsigned int scr_oglfilter;
    unsigned int scr_oglscanlines;
    unsigned int scr_led;

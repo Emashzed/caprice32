@@ -37,14 +37,8 @@ typedef struct video_plugin
   /* closes the plugin */
   void (*close)();
 
-  /* this plugin wants : 0 half sized pixels (320x200 screen)/1 full sized pixels (640x200 screen)*/
-  Uint8 half_pixels;
-
-  /* mouse offset/scaling info */
-  int x_offset, y_offset;
-  float x_scale, y_scale;
-  /* width & height of the surface to display */
-  int width, height;
+  int multiplier_x; /* horizontal scaling factor */
+  int multiplier_y; /* vertical scaling factor */
 }
 video_plugin;
 

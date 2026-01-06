@@ -1597,16 +1597,8 @@ int video_set_palette ()
 
 void video_set_style ()
 {
-   if (vid_plugin->half_pixels)
-   {
-      dwXScale = 1;
-      dwYScale = 1;
-   }
-   else
-   {
-      dwXScale = 2;
-      dwYScale = 2;
-   }
+   dwXScale = 2 - CPC.scr_half_res_x;
+   dwYScale = 2 - CPC.scr_half_res_y;
    CPC.dwYScale = dwYScale;
    switch (dwXScale) {
       case 1:
@@ -1904,6 +1896,8 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
    }
    CPC.scr_led = conf.getIntValue("video", "scr_led", 1) & 1;
    CPC.scr_fps = conf.getIntValue("video", "scr_fps", 0) & 1;
+   CPC.scr_half_res_x = conf.getIntValue("video", "scr_half_res_x", 0) & 1;
+   CPC.scr_half_res_y = conf.getIntValue("video", "scr_half_res_y", 0) & 1;
    CPC.scr_tube = conf.getIntValue("video", "scr_tube", 0) & 1;
    CPC.scr_intensity = conf.getIntValue("video", "scr_intensity", 10);
    CPC.scr_remanency = conf.getIntValue("video", "scr_remanency", 0) & 1;
@@ -1998,6 +1992,8 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
    conf.setIntValue("video", "scr_oglscanlines", CPC.scr_oglscanlines);
    conf.setIntValue("video", "scr_led", CPC.scr_led);
    conf.setIntValue("video", "scr_fps", CPC.scr_fps);
+   conf.setIntValue("video", "scr_half_res_x", CPC.scr_half_res_x);
+   conf.setIntValue("video", "scr_half_res_y", CPC.scr_half_res_y);
    conf.setIntValue("video", "scr_tube", CPC.scr_tube);
    conf.setIntValue("video", "scr_intensity", CPC.scr_intensity);
    conf.setIntValue("video", "scr_remanency", CPC.scr_remanency);
@@ -2779,6 +2775,38 @@ std::map<SDL_Scancode, std::string> scancode_names = {
     {SDL_NUM_SCANCODES, "SDL_NUM_SCANCODES"},
 };
 
+#ifdef _WIN32
+#ifndef DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+#define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 ((HANDLE)-4)
+#endif
+static void enable_dpi_awareness()
+{
+    // Try Per-Monitor V2 awareness (Windows 10+)
+    HMODULE user32 = LoadLibraryW(L"user32.dll");
+    if (user32) {
+        using SetDpiAwarenessContext_t = BOOL (WINAPI *)(DPI_AWARENESS_CONTEXT);
+
+        // FARPROC -> void* -> typed function pointer (avoids -Wcast-function-type)
+        FARPROC fp = GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+        auto pSetProcessDpiAwarenessContext =
+            reinterpret_cast<SetDpiAwarenessContext_t>(reinterpret_cast<void*>(fp));
+
+        if (pSetProcessDpiAwarenessContext) {
+            // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is available in recent SDKs.
+            // If your headers don't define it, use the documented value (HANDLE)-4.
+            pSetProcessDpiAwarenessContext(reinterpret_cast<DPI_AWARENESS_CONTEXT>(-4));
+            FreeLibrary(user32);
+            return;
+        }
+
+        FreeLibrary(user32);
+    }
+
+    // Fallback (system DPI aware)
+    SetProcessDPIAware();
+}
+#endif
+
 int cap32_main (int argc, char **argv)
 {
    int iExitCondition;
@@ -2786,6 +2814,10 @@ int cap32_main (int argc, char **argv)
    bool bin_loaded = false;
    SDL_Event event;
    std::vector<std::string> slot_list;
+
+#ifdef _WIN32
+   enable_dpi_awareness();
+#endif
 
    try {
      binPath = std::filesystem::absolute(std::filesystem::path(argv[0]).parent_path());
@@ -3169,8 +3201,8 @@ int cap32_main (int argc, char **argv)
 
             case SDL_MOUSEMOTION:
             {
-              CPC.phazer_x = (event.motion.x-vid_plugin->x_offset) * vid_plugin->x_scale;
-              CPC.phazer_y = (event.motion.y-vid_plugin->y_offset) * vid_plugin->y_scale;
+              CPC.phazer_x = event.motion.x;
+              CPC.phazer_y = event.motion.y;
             }
             break;
 

@@ -41,6 +41,10 @@
 #include <memory>
 #include <iostream>
 
+using Uint8  = std::uint8_t;
+using Uint16 = std::uint16_t;
+using Uint32 = std::uint32_t;
+
 SDL_Window* mainSDLWindow = nullptr;
 SDL_Renderer* renderer = nullptr;
 SDL_Texture* texture = nullptr;
@@ -52,6 +56,11 @@ SDL_Surface* vid = nullptr;
 SDL_Surface* scaled = nullptr;
 // the video surface shown by the plugin to the application
 SDL_Surface* pub = nullptr;
+
+int offset_x;
+int offset_y;
+int width;
+int height;
 
 extern t_CPC CPC;
 
@@ -92,57 +101,33 @@ int renderer_bpp(SDL_Renderer *sdl_renderer)
   return SDL_BITSPERPIXEL(infos.texture_formats[0]);
 }
 
-// TODO: Cleanup sw_scaling if really not needed
-void compute_scale(video_plugin* t, int w, int h)
-{
-    int win_width, win_height;
-    SDL_GetWindowSize(mainSDLWindow, &win_width, &win_height);
-
-    if (CPC.scr_preserve_aspect_ratio != 0) {
-        int scale_x = win_width  / w;
-        int scale_y = win_height / h;
-        int scale   = (scale_x < scale_y ? scale_x : scale_y);
-        if (scale < 1) scale = 1;
-        t->width  = w * scale;
-        t->height = h * scale;
-        t->x_offset = (win_width  - t->width ) / 2;
-        t->y_offset = (win_height - t->height) / 2;
-        t->x_scale = static_cast<float> (w) / static_cast<float> (t->width);
-        t->y_scale = static_cast<float> (h) / static_cast<float> (t->height);
-    } else {
-        t->x_offset = 0;
-        t->y_offset = 0;
-        t->width  = win_width;
-        t->height = win_height;
-        t->x_scale = static_cast<float> (w) / static_cast<float>(t->width);
-        t->y_scale = static_cast<float> (h) / static_cast<float>(t->height);
-    }
-}
-
 /* ------------------------------------------------------------------------------------ */
-/* Half size video plugin ------------------------------------------------------------- */
+/* Unfiltered video plugin (direct blit) ---------------------------------------------- */
 /* ------------------------------------------------------------------------------------ */
-SDL_Surface* direct_init(video_plugin* t, int scale, bool fs)
+SDL_Surface* direct_init(video_plugin* t __attribute__((unused)), int scale, bool fs)
 {
-  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH*scale, CPC_VISIBLE_SCR_HEIGHT*scale, (fs?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_SHOWN), &mainSDLWindow, &renderer);
+  Uint32 flags = (fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_SHOWN) | SDL_WINDOW_ALLOW_HIGHDPI;
+  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH*scale, CPC_VISIBLE_SCR_HEIGHT*scale, flags, &mainSDLWindow, &renderer);
   if (!mainSDLWindow || !renderer) return nullptr;
   SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
-  int surface_width, surface_height;
-  if (scale > 1) {
-    t->half_pixels = 0;
-    surface_width = CPC_VISIBLE_SCR_WIDTH * 2;
-    surface_height = CPC_VISIBLE_SCR_HEIGHT * 2;
-  } else {
-    t->half_pixels = 1;
-    surface_width = CPC_VISIBLE_SCR_WIDTH;
-    surface_height = CPC_VISIBLE_SCR_HEIGHT;
-  }
+  
+  int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
+  int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
+
   vid = SDL_CreateRGBSurface(0, surface_width, surface_height, renderer_bpp(renderer), 0, 0, 0, 0);
   if (!vid) return nullptr;
   texture = SDL_CreateTextureFromSurface(renderer, vid);
   if (!texture) return nullptr;
   SDL_FillRect(vid, nullptr, SDL_MapRGB(vid->format,0,0,0));
-  compute_scale(t, surface_width, surface_height);
+  
+  int renderer_width, renderer_height;
+  SDL_GetRendererOutputSize(renderer, &renderer_width, &renderer_height);
+  int render_scale = min(renderer_width / CPC_VISIBLE_SCR_WIDTH, renderer_height / CPC_VISIBLE_SCR_HEIGHT);
+  width = render_scale * CPC_VISIBLE_SCR_WIDTH;
+  height = render_scale * CPC_VISIBLE_SCR_HEIGHT;
+  offset_x = (renderer_width - width) / 2;
+  offset_y = (renderer_height - height) / 2;
+
   return vid;
 }
 
@@ -151,13 +136,13 @@ void direct_setpal(SDL_Color* c)
   SDL_SetPaletteColors(vid->format->palette, c, 0, 32);
 }
 
-void direct_flip(video_plugin* t)
+void direct_flip(video_plugin* t __attribute__((unused)))
 {
   SDL_UpdateTexture(texture, nullptr, vid->pixels, vid->pitch);
   SDL_RenderClear(renderer);
-  if (CPC.scr_preserve_aspect_ratio != 0) {
-    SDL_Rect dest_rect = { t->x_offset, t->y_offset, t->width, t->height };
-    SDL_RenderCopy(renderer, texture, nullptr, &dest_rect);
+  if (CPC.scr_preserve_aspect_ratio) {
+    SDL_Rect dst = { offset_x, offset_y, width, height };
+    SDL_RenderCopy(renderer, texture, nullptr, &dst);
   } else {
     SDL_RenderCopy(renderer, texture, nullptr, nullptr);
   }
@@ -181,7 +166,7 @@ static int tex_x,tex_y;
 static GLuint screen_texnum,modulate_texnum;
 static int gl_scanlines;
 
-SDL_Surface* glscale_init(video_plugin* t, int scale, bool fs)
+SDL_Surface* glscale_init(video_plugin* t __attribute__((unused)), int scale, bool fs)
 {
 #ifdef _WIN32
   const char *gl_library = "OpenGL32.DLL";
@@ -229,7 +214,8 @@ SDL_Surface* glscale_init(video_plugin* t, int scale, bool fs)
   eglGetIntegerv(GL_MAX_TEXTURE_SIZE,&max_texsize);
   if (max_texsize<1024) {
       printf("Your OpenGL implementation doesn't support 1024x1024 textures: max size = %d\n", max_texsize);
-      t->half_pixels = 1;
+      CPC.scr_half_res_x = 1;
+      CPC.scr_half_res_y = 1;
    }
   if (max_texsize<512) {
     fprintf(stderr, "Your OpenGL implementation doesn't support 512x512 textures\n");
@@ -237,17 +223,19 @@ SDL_Surface* glscale_init(video_plugin* t, int scale, bool fs)
   }
 
    unsigned int original_width, original_height, tex_size;
-   if (t->half_pixels) {
-      tex_size = 512;
+   tex_size = 512;
+   if (CPC.scr_half_res_x) {
       original_width = CPC_VISIBLE_SCR_WIDTH;
-      original_height = CPC_VISIBLE_SCR_HEIGHT;
    } else {
       tex_size = 1024;
       original_width = CPC_VISIBLE_SCR_WIDTH * 2;
+   }
+    if (CPC.scr_half_res_y) {
+        original_height = CPC_VISIBLE_SCR_HEIGHT;
+   } else {
+      tex_size = 1024;
       original_height = CPC_VISIBLE_SCR_HEIGHT * 2;
    }
-
-  compute_scale(t, original_width, original_height);
 
   // We have to react differently to the bpp parameter than with software rendering
   // Here are the rules :
@@ -336,11 +324,11 @@ SDL_Surface* glscale_init(video_plugin* t, int scale, bool fs)
     modulate_texture[5]=texmod;
     eglTexImage2D(GL_TEXTURE_2D, 0,GL_RGB8,1,2, 0,GL_RGB,GL_UNSIGNED_BYTE, modulate_texture);
   }
-  if (CPC.scr_preserve_aspect_ratio) {
-    eglViewport(t->x_offset, t->y_offset, t->width, t->height);
-  } else {
+  // if (CPC.scr_preserve_aspect_ratio) {
+    // eglViewport(t->x_offset, t->y_offset, t->width, t->height);
+  // } else {
     eglViewport(0, 0, width, height);
-  }
+  // }
   eglMatrixMode(GL_PROJECTION);
   eglLoadIdentity();
   eglOrtho(0, width, height, 0, -1.0, 1.0);
@@ -493,89 +481,47 @@ void glscale_close()
  *
  * Only exposed for testing purposes. Shouldn't be used outside of video.cpp
  */
-static void compute_rects(SDL_Rect* src, SDL_Rect* dst, Uint8 half_pixels)
+static void compute_rects(SDL_Rect* src, SDL_Rect* dst)
 {
-  int surface_width = CPC_VISIBLE_SCR_WIDTH*4;
-  int surface_height = CPC_VISIBLE_SCR_HEIGHT*4;
-  if (half_pixels) {
-    surface_width = CPC_VISIBLE_SCR_WIDTH*2;
-    surface_height = CPC_VISIBLE_SCR_HEIGHT*2;
-  }
-  /* initialise the source rect to full source */
-  src->x=0;
-  src->y=0;
-  src->w=pub->w;
-  src->h=pub->h;
-  
-  dst->x=(scaled->w-surface_width)/2,
-  dst->y=(scaled->h-surface_height)/2;
-  dst->w=scaled->w;
-  dst->h=scaled->h;
-  
-  int dw=src->w*2-dst->w;
-  /* the src width is too big */
-  if (dw>0)
-  {
-    // To ensure src is not bigger than dst for odd widths.
-    dw += 1;
-    src->w-=dw/2;
-    src->x+=dw/4;
+  src->x = 0;
+  src->y = 0;
+  src->w = pub->w;
+  src->h = pub->h;
 
-    dst->x=0;
-    dst->w=scaled->w;
-  }
-  else
-  {
-    dst->w=surface_width;
-  }
-  int dh=src->h*2-dst->h;
-  /* the src height is too big */
-  if (dh>0)
-  {
-    // To ensure src is not bigger than dst for odd heights.
-    dh += 1;
-    src->h-=dh/2;
-    src->y+=dh/4;
-    
-    dst->y=0;
-    dst->h=scaled->h;
-  }
-  else
-  {
-    // Without this -=, the bottom of the screen has line with random pixels.
-    // With this, they are black instead which is slightly better.
-    // Investigating where this comes from and how to avoid it would be nice!
-    src->h-=2*2;
-    dst->h=surface_height;
-  }
+  dst->x = 0;
+  dst->y = 0;
+  dst->w = scaled->w;
+  dst->h = scaled->h;
 }
 
-void compute_rects_for_tests(SDL_Rect* src, SDL_Rect* dst, Uint8 half_pixels)
+void compute_rects_for_tests(SDL_Rect* src, SDL_Rect* dst)
 {
-  compute_rects(src, dst, half_pixels);
+  compute_rects(src, dst);
 }
 
 SDL_Surface* swscale_init(video_plugin* t, int scale, bool fs)
 {
-  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH*scale, CPC_VISIBLE_SCR_HEIGHT*scale, (fs?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_SHOWN), &mainSDLWindow, &renderer);
+  Uint32 flags = (fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_SHOWN) | SDL_WINDOW_ALLOW_HIGHDPI;
+
+  int window_width = CPC_VISIBLE_SCR_WIDTH * scale;
+  int window_height = CPC_VISIBLE_SCR_HEIGHT * scale;
+
+  int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
+  int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
+
+  int scaled_width = surface_width * t->multiplier_x;
+  int scaled_height = surface_height * t->multiplier_y;
+
+  SDL_CreateWindowAndRenderer(window_width, window_height, flags, &mainSDLWindow, &renderer);
   if (!mainSDLWindow || !renderer) return nullptr;
   SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
-  int surface_width, surface_height;
-  if (scale < 4) {
-    t->half_pixels = 1;
-    surface_width = CPC_VISIBLE_SCR_WIDTH;
-    surface_height = CPC_VISIBLE_SCR_HEIGHT;
-  } else {
-    t->half_pixels = 0;
-    surface_width = CPC_VISIBLE_SCR_WIDTH * 2;
-    surface_height = CPC_VISIBLE_SCR_HEIGHT * 2;
-  }
-  vid = SDL_CreateRGBSurface(0, surface_width*2, surface_height*2, renderer_bpp(renderer), 0, 0, 0, 0);
+
+  vid = SDL_CreateRGBSurface(0, scaled_width, scaled_height, renderer_bpp(renderer), 0, 0, 0, 0);
   if (!vid) return nullptr;
   texture = SDL_CreateTextureFromSurface(renderer, vid);
   if (!texture) return nullptr;
 
-  scaled = SDL_CreateRGBSurface(0, surface_width*2, surface_height*2, 16, 0, 0, 0, 0);
+  scaled = SDL_CreateRGBSurface(0, scaled_width, scaled_height, 16, 0, 0, 0, 0);
   if (!scaled) return nullptr;
   if (scaled->format->BitsPerPixel!=16)
   {
@@ -583,7 +529,7 @@ SDL_Surface* swscale_init(video_plugin* t, int scale, bool fs)
     return nullptr;
   }
   SDL_FillRect(vid, nullptr, SDL_MapRGB(vid->format,0,0,0));
-  compute_scale(t, surface_width, surface_height);
+
   pub = SDL_CreateRGBSurface(0, surface_width, surface_height, 16, 0, 0, 0, 0);
   if (pub->format->BitsPerPixel!=16)
   {
@@ -591,19 +537,26 @@ SDL_Surface* swscale_init(video_plugin* t, int scale, bool fs)
     return nullptr;
   }
 
+  int renderer_width, renderer_height;
+  SDL_GetRendererOutputSize(renderer, &renderer_width, &renderer_height);
+  int render_scale = min(renderer_width / CPC_VISIBLE_SCR_WIDTH, renderer_height / CPC_VISIBLE_SCR_HEIGHT);
+  width = render_scale * CPC_VISIBLE_SCR_WIDTH;
+  height = render_scale * CPC_VISIBLE_SCR_HEIGHT;
+  offset_x = (renderer_width - width) / 2;
+  offset_y = (renderer_height - height) / 2;
+
   return pub;
 }
 
 // Common code to all software plugin to display the vid surface after it's been computed.
-void swscale_blit(video_plugin* t)
+void swscale_blit()
 {
-  // Blit to convert from 16bpp to pixel format compatible with renderer.
   SDL_BlitSurface(scaled, nullptr, vid, nullptr);
   SDL_UpdateTexture(texture, nullptr, vid->pixels, vid->pitch);
   SDL_RenderClear(renderer);
-  if (CPC.scr_preserve_aspect_ratio != 0) {
-    SDL_Rect dest_rect = { t->x_offset, t->y_offset, t->width, t->height };
-    SDL_RenderCopy(renderer, texture, nullptr, &dest_rect);
+  if (CPC.scr_preserve_aspect_ratio) {
+    SDL_Rect dst = { offset_x, offset_y, width, height };
+    SDL_RenderCopy(renderer, texture, nullptr, &dst);
   } else {
     SDL_RenderCopy(renderer, texture, nullptr, nullptr);
   }
@@ -875,18 +828,18 @@ void filter_supereagle(Uint8 *srcPtr, Uint32 srcPitch, /* Uint8 *deltaPtr,  */
   }      // endof: for (height; height; height--)
 }
 
-void seagle_flip(video_plugin* t)
+void seagle_flip(video_plugin* t __attribute__((unused)))
 {
   if (SDL_MUSTLOCK(scaled))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_supereagle(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
      static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -927,12 +880,12 @@ void scale2x_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_scale2x(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
      static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1134,12 +1087,12 @@ void ascale2x_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_ascale2x(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 
@@ -1181,12 +1134,12 @@ void tv2x_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_tv2x(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1224,12 +1177,12 @@ void swbilin_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_bilinear(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1314,12 +1267,12 @@ void swbicub_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_bicubic(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1365,16 +1318,16 @@ void dotmat_flip(video_plugin* t __attribute__((unused)))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_dotmatrix(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
 }
 
 /* ------------------------------------------------------------------------------------ */
-/* Dot matrix video plugin ------------------------------------------------------------ */
+/* Monitor 2x video plugin ------------------------------------------------------------ */
 /* ------------------------------------------------------------------------------------ */
 static inline Uint16 rgb565_scale(Uint16 c, int num, int den)
 {
@@ -1451,18 +1404,374 @@ void filter_monitor(Uint8 *srcPtr, Uint32 srcPitch,
   }
 }
 
-void swmonitor_flip(video_plugin* t __attribute__((unused)))
+void monitor_flip(video_plugin* t __attribute__((unused)))
 {
   if (SDL_MUSTLOCK(scaled))
     SDL_LockSurface(scaled);
   SDL_Rect src;
   SDL_Rect dst;
-  compute_rects(&src,&dst,t->half_pixels);
+  compute_rects(&src,&dst);
   filter_monitor(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
-  swscale_blit(t);
+  swscale_blit();
+}
+
+
+// ============================================================
+// CTM644 filter
+//   - slight horizontal smear
+//   - LUT transformation for RGB triads
+//   - 4x4 expansion
+// ============================================================
+
+#define EXPAND 4
+
+
+// RGB565 helpers
+
+static inline Uint8 expand5to8(Uint16 v5) { return Uint8((v5 << 3) | (v5 >> 2)); }
+static inline Uint8 expand6to8(Uint16 v6) { return Uint8((v6 << 2) | (v6 >> 4)); }
+
+static inline void unpack565_to_rgb8(Uint16 p, float &r, float &g, float &b) {
+  Uint16 r5 = (p >> 11) & 0x1F;
+  Uint16 g6 = (p >> 5)  & 0x3F;
+  Uint16 b5 =  p        & 0x1F;
+  r = static_cast<float> (expand5to8(r5));
+  g = static_cast<float> (expand6to8(g6));
+  b = static_cast<float> (expand5to8(b5));
+}
+
+static inline Uint16 pack565_from_rgbf(float rf, float gf, float bf) {
+  // clamp 0..255
+  int r =  static_cast<int> (std::lround(min(255.0f, max(0.0f, rf))));
+  int g =  static_cast<int> (std::lround(min(255.0f, max(0.0f, gf))));
+  int b =  static_cast<int> (std::lround(min(255.0f, max(0.0f, bf))));
+  return static_cast<Uint16>((((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)));
+}
+
+#define HALF_MASK    0xF7DEu
+#define QUARTER_MASK 0xE79Cu
+
+static inline Uint16 avg_1_1(Uint16 a, Uint16 b) {
+  return static_cast<Uint16> ((((a & HALF_MASK) + (b & HALF_MASK)) >> 1));
+}
+
+// Smear pixel: L/8 + R/8 + C*3/4  (RGB565-safe)
+static inline Uint16 smear(Uint16 C, Uint16 L, Uint16 R) {
+  if (C == L && C == R) return C;
+
+  Uint16 ch = static_cast<Uint16>(C & HALF_MASK);
+
+  // x = L/4 + R/4 + C/2
+  Uint32 x = ((static_cast<Uint32>(L & QUARTER_MASK) + static_cast<Uint32>(R & QUARTER_MASK)) >> 1);
+  x = (x + ch) >> 1;
+
+  // y = x/2 + C/2  -> L/8 + R/8 + 3/4 C
+  Uint32 y = ((static_cast<Uint32>(static_cast<Uint16>(x) & HALF_MASK) + static_cast<Uint32>(ch)) >> 1);
+  return static_cast<Uint16>(y);
+}
+
+static const Uint8 PATTERN_CH[4][6] = {
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+};
+
+static const Uint8 PATTERN_BR[4][6] = {
+  {1,1,1,1,1,1},
+  {1,1,1,0,0,0},
+  {1,1,1,1,1,1},
+  {0,0,0,1,1,1},
+};
+
+#define LUT_CH 3
+#define LUT_BR 2
+#define LUT_SZ 65536
+
+static uint16_t *gTriadLUT = NULL;
+
+static inline uint16_t LUT_GET(int ch, int br, uint16_t src565) {
+    // index = ((ch*2 + br)*65536 + src565)
+    return gTriadLUT[ ((ch<<1) + br) * LUT_SZ + src565 ];
+}
+
+// Generation parameters
+struct TriadParams {
+  float BRIGHT_FACTOR;         // Values : [0.00 .. 3.00]
+  float DIM_FACTOR;            // Values : [0.05 .. 2.00]
+  float TRIAD_TINT;            // Values : [0.00 .. 1.00]
+  float TRIAD_TINT_DIM;        // Values : [0.00 .. 1.50]
+  float BLACK_FLOOR;           // Values : [0.0  .. 24.0]
+  float CROSS_BLEED;           // Values : [0.00 .. 0.30]
+  float MASK_GAIN;             // Values : [0.80 .. 2.50]
+  float SUBPIX_FLOOR_8;        // Values : [0.0  .. 12.0]
+  float GAIN_8;                // Values : [0.70 .. 1.80]
+  float GAMMA;                 // Values : [0.00 .. 2.00]
+  float OUTPUT_BLACK_POINT;    // Values : [0.00 .. 0.40]
+  float OUTPUT_SATURATION;     // Values : [0.50 .. 2.00]
+};
+
+// ------------------------------------------------------------
+// LUT build
+// triadLUT[ch][bright][src565] -> dst565
+// Layout note: [3][2][65536] is 3*2*65536 = 393,216 entries = 768 KB (Uint16)
+// ------------------------------------------------------------
+static inline float apply_black_point(float v255, float bp) {
+  if (bp <= 0.0f) return v255;
+  float x = v255 / 255.0f;
+  x = (x - bp) / (1.0f - bp);
+  if (x < 0.0f) x = 0.0f;
+  return x * 255.0f;
+}
+
+static inline void apply_saturation(float &r, float &g, float &b, float sat) {
+  if (sat == 1.0f) return;
+  // Rec.601-ish luma (as in your python)
+  float y = 0.299f * r + 0.587f * g + 0.114f * b;
+  r = y + (r - y) * sat;
+  g = y + (g - y) * sat;
+  b = y + (b - y) * sat;
+}
+
+void build_triad_lut_565(Uint16 *triadLUT /*size 3*2*65536*/, const TriadParams &P)
+{
+  // gamma table (uses 1/gamma like your python)
+  float gammaLUT[256];
+  float gamma = (P.GAMMA <= 0.0f) ? 1.0f : P.GAMMA;
+  float invG = 1.0f / gamma;
+  for (int i = 0; i < 256; ++i) {
+    float x =  static_cast<float> (i) / 255.0f;
+    gammaLUT[i] = 255.0f * std::pow(x, invG);
+  }
+
+  auto LUT = [&](int ch, int bright, int src565) -> Uint16& {
+    // contiguous packing: ch-major, then bright, then src565
+    return triadLUT[(ch * 2 + bright) * 65536 + src565];
+  };
+
+  const float floor = P.SUBPIX_FLOOR_8;
+
+  for (int p = 0; p < 65536; ++p) {
+    float r, g, b;
+    unpack565_to_rgb8(static_cast<Uint16> (p), r, g, b);
+
+    // GAIN_8 preconditioning
+    r *= P.GAIN_8; g *= P.GAIN_8; b *= P.GAIN_8;
+    r = min(255.0f, max(0.0f, r));
+    g = min(255.0f, max(0.0f, g));
+    b = min(255.0f, max(0.0f, b));
+
+    // gamma via table
+    int ri = static_cast<int> (std::lround(r)); if (ri < 0) ri = 0; if (ri > 255) ri = 255;
+    int gi = static_cast<int> (std::lround(g)); if (gi < 0) gi = 0; if (gi > 255) gi = 255;
+    int bi = static_cast<int> (std::lround(b)); if (bi < 0) bi = 0; if (bi > 255) bi = 255;
+    r = gammaLUT[ri];
+    g = gammaLUT[gi];
+    b = gammaLUT[bi];
+
+    // post-gamma shaping
+    r = apply_black_point(r, P.OUTPUT_BLACK_POINT);
+    g = apply_black_point(g, P.OUTPUT_BLACK_POINT);
+    b = apply_black_point(b, P.OUTPUT_BLACK_POINT);
+    apply_saturation(r, g, b, P.OUTPUT_SATURATION);
+
+    // cross-bleed on underlying
+    float br = r + P.CROSS_BLEED * (g + b) * 0.5f;
+    float bg = g + P.CROSS_BLEED * (r + b) * 0.5f;
+    float bb = b + P.CROSS_BLEED * (r + g) * 0.5f;
+
+    // underlying floor
+    if (br < P.BLACK_FLOOR) br = P.BLACK_FLOOR;
+    if (bg < P.BLACK_FLOOR) bg = P.BLACK_FLOOR;
+    if (bb < P.BLACK_FLOOR) bb = P.BLACK_FLOOR;
+
+    for (int bright = 0; bright <= 1; ++bright) {
+      float f = (bright == 1) ? P.BRIGHT_FACTOR : P.DIM_FACTOR;
+      float t = (bright == 1) ? P.TRIAD_TINT    : P.TRIAD_TINT_DIM;
+
+      float fullR = br * f;
+      float fullG = bg * f;
+      float fullB = bb * f;
+
+      float maskR = fullR * P.MASK_GAIN;
+      float maskG = fullG * P.MASK_GAIN;
+      float maskB = fullB * P.MASK_GAIN;
+
+      // out = (1-t)*mask + t*full + floor
+      // R triad
+      {
+        float oR = (1.0f - t) * maskR + t * fullR + floor;
+        float oG = (1.0f - t) * 0.0f  + t * fullG + floor;
+        float oB = (1.0f - t) * 0.0f  + t * fullB + floor;
+        LUT(0, bright, p) = pack565_from_rgbf(oR, oG, oB);
+      }
+      // G triad
+      {
+        float oR = (1.0f - t) * 0.0f  + t * fullR + floor;
+        float oG = (1.0f - t) * maskG + t * fullG + floor;
+        float oB = (1.0f - t) * 0.0f  + t * fullB + floor;
+        LUT(1, bright, p) = pack565_from_rgbf(oR, oG, oB);
+      }
+      // B triad
+      {
+        float oR = (1.0f - t) * 0.0f  + t * fullR + floor;
+        float oG = (1.0f - t) * 0.0f  + t * fullG + floor;
+        float oB = (1.0f - t) * maskB + t * fullB + floor;
+        LUT(2, bright, p) = pack565_from_rgbf(oR, oG, oB);
+      }
+    }
+  }
+}
+
+#ifdef DEBUG
+bool save_triad_lut_bin(const char *path, const Uint16 *triadLUT) {
+  FILE *f = std::fopen(path, "wb");
+  if (!f) return false;
+  size_t n = std::fwrite(triadLUT, sizeof(Uint16), 3u * 2u * 65536u, f);
+  std::fclose(f);
+  return n == (3u * 2u * 65536u);
+}
+#endif
+
+void init_triad_lut() {
+  if (gTriadLUT) return;
+
+  TriadParams P;
+  P.BRIGHT_FACTOR      = 1.75f;
+  P.DIM_FACTOR         = 0.45f;
+  P.TRIAD_TINT         = 0.50f;
+  P.TRIAD_TINT_DIM     = 1.00f;
+  P.BLACK_FLOOR        = 12.0f;
+  P.CROSS_BLEED        = 0.10f;
+  P.MASK_GAIN          = 1.66f;
+  P.SUBPIX_FLOOR_8     = 3.80f;
+  P.GAIN_8             = 1.00f;
+  P.GAMMA              = 0.75f;
+  P.OUTPUT_BLACK_POINT = 0.00f;
+  P.OUTPUT_SATURATION  = 1.20f;
+
+  gTriadLUT = new Uint16[3 * 2 * 65536];
+
+  build_triad_lut_565(gTriadLUT, P);
+#ifdef DEBUG
+  save_triad_lut_bin("triad_lut-out.bin", gTriadLUT);
+#endif
+}
+
+void free_triad_lut() {
+    if (gTriadLUT) {
+        delete[] gTriadLUT;
+        gTriadLUT = NULL;
+    }
+}
+
+// ------------------------------------------------------------
+// CTM644 filter
+// ------------------------------------------------------------
+void filter_crt_smear_lut4x4(
+  Uint8 *srcPtr, Uint32 srcPitch,
+  Uint8 *dstPtr, Uint32 dstPitch,
+  int width, int height
+){
+  const Uint32 nextlineSrc = srcPitch / sizeof(Uint16);
+  const Uint32 nextlineDst = dstPitch / sizeof(Uint16);
+
+  Uint16 *p = reinterpret_cast<Uint16*> (srcPtr);
+  Uint16 *q = reinterpret_cast<Uint16*> (dstPtr);
+
+  if (!gTriadLUT) return;
+
+  int i, ii, j, jj;
+  for (j = 0, jj = 0; j < height; ++j, jj += EXPAND) {
+
+    Uint16 *q0 = q;
+    Uint16 *q1 = q + nextlineDst;
+    Uint16 *q2 = q + (nextlineDst * 2);
+    Uint16 *q3 = q + (nextlineDst * 3);
+
+    const int pr0 = (jj + 0) & 3;
+    const int pr1 = (jj + 1) & 3;
+    const int pr2 = (jj + 2) & 3;
+    const int pr3 = (jj + 3) & 3;
+
+    int pcx = 0;
+
+    for (i = 0, ii = 0; i < width; ++i, ii += EXPAND) {
+
+      const int im1 = (i == 0) ? 0 : (i - 1);
+      const int ip1 = (i == width - 1) ? (width - 1) : (i + 1);
+
+      const Uint16 C = p[i];
+      const Uint16 L = p[im1];
+      const Uint16 R = p[ip1];
+
+      const Uint16 s = smear(C, L, R);
+
+      const int pc0 = pcx;
+      const int pc1 = (pc0 == 5) ? 0 : (pc0 + 1);
+      const int pc2 = (pc1 == 5) ? 0 : (pc1 + 1);
+      const int pc3 = (pc2 == 5) ? 0 : (pc2 + 1);
+
+      q0[ii + 0] = LUT_GET(PATTERN_CH[pr0][pc0], PATTERN_BR[pr0][pc0], s);
+      q0[ii + 1] = LUT_GET(PATTERN_CH[pr0][pc1], PATTERN_BR[pr0][pc1], s);
+      q0[ii + 2] = LUT_GET(PATTERN_CH[pr0][pc2], PATTERN_BR[pr0][pc2], s);
+      q0[ii + 3] = LUT_GET(PATTERN_CH[pr0][pc3], PATTERN_BR[pr0][pc3], s);
+
+      q1[ii + 0] = LUT_GET(PATTERN_CH[pr1][pc0], PATTERN_BR[pr1][pc0], s);
+      q1[ii + 1] = LUT_GET(PATTERN_CH[pr1][pc1], PATTERN_BR[pr1][pc1], s);
+      q1[ii + 2] = LUT_GET(PATTERN_CH[pr1][pc2], PATTERN_BR[pr1][pc2], s);
+      q1[ii + 3] = LUT_GET(PATTERN_CH[pr1][pc3], PATTERN_BR[pr1][pc3], s);
+
+      q2[ii + 0] = LUT_GET(PATTERN_CH[pr2][pc0], PATTERN_BR[pr2][pc0], s);
+      q2[ii + 1] = LUT_GET(PATTERN_CH[pr2][pc1], PATTERN_BR[pr2][pc1], s);
+      q2[ii + 2] = LUT_GET(PATTERN_CH[pr2][pc2], PATTERN_BR[pr2][pc2], s);
+      q2[ii + 3] = LUT_GET(PATTERN_CH[pr2][pc3], PATTERN_BR[pr2][pc3], s);
+
+      q3[ii + 0] = LUT_GET(PATTERN_CH[pr3][pc0], PATTERN_BR[pr3][pc0], s);
+      q3[ii + 1] = LUT_GET(PATTERN_CH[pr3][pc1], PATTERN_BR[pr3][pc1], s);
+      q3[ii + 2] = LUT_GET(PATTERN_CH[pr3][pc2], PATTERN_BR[pr3][pc2], s);
+      q3[ii + 3] = LUT_GET(PATTERN_CH[pr3][pc3], PATTERN_BR[pr3][pc3], s);
+
+      pcx += (EXPAND % 6);
+      if (pcx >= 6) pcx -= 6;
+    }
+    p += nextlineSrc;
+    q += nextlineDst * EXPAND;
+  }
+}
+
+void ctm644_flip(video_plugin* t __attribute__((unused)))
+{
+  if (SDL_MUSTLOCK(scaled))
+    SDL_LockSurface(scaled);
+  SDL_Rect src;
+  SDL_Rect dst;
+  compute_rects(&src,&dst);
+  filter_crt_smear_lut4x4(
+      static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch), 
+      pub->pitch,
+      static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), 
+      scaled->pitch, 
+      src.w, 
+      src.h);
+  if (SDL_MUSTLOCK(scaled))
+    SDL_UnlockSurface(scaled);
+  swscale_blit();
+}
+
+SDL_Surface* ctm644_init(video_plugin* t, int scale, bool fs)
+{
+  init_triad_lut();
+  return swscale_init(t, scale, fs);
+}
+
+void ctm644_close()
+{
+  free_triad_lut();
+  swscale_close();
 }
 
 /* ------------------------------------------------------------------------------------ */
@@ -1472,20 +1781,21 @@ void swmonitor_flip(video_plugin* t __attribute__((unused)))
 std::vector<video_plugin> video_plugin_list =
 {
   // Hardware flip version are the same as software ones since switch to SDL2. Kept for compatibility of config, would be nice to not display them in the UI.
-  /* Name                     Hidden Init func      Palette func     Flip func      Close func      Half size  X, Y offsets   X, Y scale  width, height */
-  {"Direct",                  false, direct_init,   direct_setpal,   direct_flip,   direct_close,   1,         0, 0,          0, 0, 0, 0 },
-  {"Direct double",           true,  direct_init,   direct_setpal,   direct_flip,   direct_close,   0,         0, 0,          0, 0, 0, 0 },
-  {"Half size",               true,  direct_init,   direct_setpal,   direct_flip,   direct_close,   1,         0, 0,          0, 0, 0, 0 },
-  {"Double size",             true,  direct_init,   direct_setpal,   direct_flip,   direct_close,   0,         0, 0,          0, 0, 0, 0 },
-  {"Super eagle",             false, swscale_init,  swscale_setpal,  seagle_flip,   swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Scale2x",                 false, swscale_init,  swscale_setpal,  scale2x_flip,  swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Advanced Scale2x",        false, swscale_init,  swscale_setpal,  ascale2x_flip, swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"TV 2x",                   false, swscale_init,  swscale_setpal,  tv2x_flip,     swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Software bilinear",       false, swscale_init,  swscale_setpal,  swbilin_flip,  swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Software bicubic",        false, swscale_init,  swscale_setpal,  swbicub_flip,  swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Dot matrix",              false, swscale_init,  swscale_setpal,  dotmat_flip,   swscale_close,  1,         0, 0,          0, 0, 0, 0 },
-  {"Monitor 2x",              false, swscale_init,  swscale_setpal,  swmonitor_flip,swscale_close,  1,         0, 0,          0, 0, 0, 0 },
+  /* Name                     Hidden Init func      Palette func     Flip func      Close func     Multiplier X/Y */  
+  {"Direct",                  false, direct_init,   direct_setpal,   direct_flip,   direct_close,            1, 1 },
+  {"Direct double",           true,  direct_init,   direct_setpal,   direct_flip,   direct_close,            1, 1 },
+  {"Half size",               true,  direct_init,   direct_setpal,   direct_flip,   direct_close,            1, 1 },
+  {"Double size",             true,  direct_init,   direct_setpal,   direct_flip,   direct_close,            1, 1 },
+  {"Super eagle",             false, swscale_init,  swscale_setpal,  seagle_flip,   swscale_close,           2, 2 },
+  {"Scale2x",                 false, swscale_init,  swscale_setpal,  scale2x_flip,  swscale_close,           2, 2 },
+  {"Advanced Scale2x",        false, swscale_init,  swscale_setpal,  ascale2x_flip, swscale_close,           2, 2 },
+  {"TV 2x",                   false, swscale_init,  swscale_setpal,  tv2x_flip,     swscale_close,           2, 2 },
+  {"Software bilinear",       false, swscale_init,  swscale_setpal,  swbilin_flip,  swscale_close,           2, 2 },
+  {"Software bicubic",        false, swscale_init,  swscale_setpal,  swbicub_flip,  swscale_close,           2, 2 },
+  {"Dot matrix",              false, swscale_init,  swscale_setpal,  dotmat_flip,   swscale_close,           2, 2 },
 #ifdef HAVE_GL
-  {"OpenGL scaling",          false, glscale_init,  glscale_setpal,  glscale_flip,  glscale_close,  0,         0, 0,          0, 0, 0, 0 },
+  {"OpenGL scaling",          false, glscale_init,  glscale_setpal,  glscale_flip,  glscale_close,           1, 1 },
 #endif
+  {"Monitor 2x",              false, swscale_init,  swscale_setpal,  monitor_flip,  swscale_close,           2, 2 },
+  {"CTM644 4x",               false, ctm644_init,   swscale_setpal,  ctm644_flip,   ctm644_close,            4, 4 },
 };
