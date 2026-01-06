@@ -209,7 +209,7 @@ CapriceOptions::CapriceOptions(const CRect& WindowRect, CWindow* pParent, CFontE
     m_pCheckBoxEnableSound->SetIsFocusable(true);
     m_pLabelEnableSound    = new CLabel(CPoint(28, 1), m_pGroupBoxTabAudio, "Enable Sound Emulation");
 
-    m_pDropDownSamplingRate = new CDropDown(CRect(CPoint(100,25),100,16), m_pGroupBoxTabAudio, false); // Select audio sampling rate
+    m_pDropDownSamplingRate = new CDropDown(CRect(CPoint(100,20),100,16), m_pGroupBoxTabAudio, false); // Select audio sampling rate
     m_pDropDownSamplingRate->AddItem(SListItem("11025 Hz"));
     m_pDropDownSamplingRate->AddItem(SListItem("22050 Hz"));
     m_pDropDownSamplingRate->AddItem(SListItem("44100 Hz"));
@@ -219,10 +219,21 @@ CapriceOptions::CapriceOptions(const CRect& WindowRect, CWindow* pParent, CFontE
     m_pDropDownSamplingRate->SelectItem(CPC.snd_playback_rate);
     m_pDropDownSamplingRate->SetIsFocusable(true);
 
-    m_pLabelSamplingRate = new CLabel(CPoint(10, 27), m_pGroupBoxTabAudio, "Playback Rate");
+    m_pLabelSamplingRate = new CLabel(CPoint(10, 22), m_pGroupBoxTabAudio, "Playback Rate");
 
-    m_pGroupBoxChannels    = new CGroupBox(CRect(CPoint(10, 55), 130, 40), m_pGroupBoxTabAudio, "Channels");
-    m_pGroupBoxSampleSize  = new CGroupBox(CRect(CPoint(150, 55), 130, 40), m_pGroupBoxTabAudio, "Sample Size");
+    m_pDropDownFiltering = new CDropDown(CRect(CPoint(100,40),100,16), m_pGroupBoxTabAudio, false); // Audio filtering
+    m_pDropDownFiltering->AddItem(SListItem("No filtering"));
+    m_pDropDownFiltering->AddItem(SListItem("Low filtering"));
+    m_pDropDownFiltering->AddItem(SListItem("Medium filtering"));
+    m_pDropDownFiltering->AddItem(SListItem("High filtering"));
+    m_pDropDownFiltering->SetListboxHeight(4);
+    m_pDropDownFiltering->SelectItem(CPC.snd_filtering);
+    m_pDropDownFiltering->SetIsFocusable(true);
+
+    m_pLabelFiltering = new CLabel(CPoint(10, 42), m_pGroupBoxTabAudio, "Filtering");
+
+    m_pGroupBoxChannels    = new CGroupBox(CRect(CPoint(10, 62), 130, 40), m_pGroupBoxTabAudio, "Channels");
+    m_pGroupBoxSampleSize  = new CGroupBox(CRect(CPoint(150, 62), 130, 40), m_pGroupBoxTabAudio, "Sample Size");
     m_pRadioButtonMono   = new CRadioButton(CPoint(5, 2), 10, m_pGroupBoxChannels);
     m_pLabelMono         = new CLabel(CPoint(20,3), m_pGroupBoxChannels, "Mono");
     m_pRadioButtonStereo = new CRadioButton(CPoint(55, 2), 10, m_pGroupBoxChannels); // position is within the parent! (groupbox)
@@ -365,6 +376,7 @@ bool CapriceOptions::HandleMessage(CMessage* pMessage)
               CPC.snd_volume = m_pScrollBarVolume->GetValue();
               CPC.snd_stereo = m_pRadioButtonStereo->GetState()==CRadioButton::CHECKED ? 1 : 0;
               CPC.snd_bits   = m_pRadioButton16bit->GetState()==CRadioButton::CHECKED ? 1 : 0;
+              CPC.snd_filtering = m_pDropDownFiltering->GetSelectedIndex();
 
               // 'Input' settings
               CPC.keyboard = m_pDropDownCPCLanguage->GetSelectedIndex();
@@ -542,9 +554,11 @@ bool CapriceOptions::ProcessOptionChanges(t_CPC& CPC, bool saveChanges) {
     }
 
     // Restart audio subsystem if playback rate, sample size or channels (mono/stereo) or volume has changed:
-    if (CPC.snd_stereo != m_oldCPCsettings.snd_stereo || CPC.snd_bits != m_oldCPCsettings.snd_bits ||
+    if (CPC.snd_stereo != m_oldCPCsettings.snd_stereo || 
+        CPC.snd_bits != m_oldCPCsettings.snd_bits ||
         CPC.snd_volume != m_oldCPCsettings.snd_volume ||
-        CPC.snd_playback_rate != m_oldCPCsettings.snd_playback_rate) {
+        CPC.snd_playback_rate != m_oldCPCsettings.snd_playback_rate ||
+        CPC.snd_filtering != m_oldCPCsettings.snd_filtering) {
             // audio restart:
             if (CPC.snd_enabled) {
                 audio_shutdown();
@@ -553,13 +567,13 @@ bool CapriceOptions::ProcessOptionChanges(t_CPC& CPC, bool saveChanges) {
     }
 
     // Restart video subsystem
-    if (CPC.model != m_oldCPCsettings.model 
-      || CPC.scr_window != m_oldCPCsettings.scr_window 
-      || CPC.scr_style != m_oldCPCsettings.scr_style 
-      || CPC.scr_scale != m_oldCPCsettings.scr_scale 
-      || CPC.scr_preserve_aspect_ratio != m_oldCPCsettings.scr_preserve_aspect_ratio
-      || CPC.scr_half_res_x != m_oldCPCsettings.scr_half_res_x
-      || CPC.scr_half_res_y != m_oldCPCsettings.scr_half_res_y
+    if (CPC.model != m_oldCPCsettings.model ||
+        CPC.scr_window != m_oldCPCsettings.scr_window ||
+        CPC.scr_style != m_oldCPCsettings.scr_style ||
+        CPC.scr_scale != m_oldCPCsettings.scr_scale ||
+        CPC.scr_preserve_aspect_ratio != m_oldCPCsettings.scr_preserve_aspect_ratio ||
+        CPC.scr_half_res_x != m_oldCPCsettings.scr_half_res_x ||
+        CPC.scr_half_res_y != m_oldCPCsettings.scr_half_res_y
     )
     {
         audio_pause();
