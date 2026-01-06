@@ -170,7 +170,19 @@ CapriceOptions::CapriceOptions(const CRect& WindowRect, CWindow* pParent, CFontE
     char intensityValue[5];
     sprintf(intensityValue, "%2.1f ", CPC.scr_intensity / 10.0);
     m_pLabelIntensityValue = new CLabel(CPoint(230, 10), m_pGroupBoxMonitor, intensityValue);
-
+    
+    m_pCheckBoxHalfResX   = new CCheckBox(CRect(CPoint(160, 90), 10, 10), m_pGroupBoxTabVideo);
+    if (CPC.scr_half_res_x == 1) {
+        m_pCheckBoxHalfResX->SetCheckBoxState(CCheckBox::CHECKED);
+    }
+    m_pCheckBoxHalfResX->SetIsFocusable(true);
+    m_pLabelHalfResX      = new CLabel(CPoint(177, 91), m_pGroupBoxTabVideo, "Half horizontal resolution");
+    m_pCheckBoxHalfResY   = new CCheckBox(CRect(CPoint(160, 110), 10, 10), m_pGroupBoxTabVideo);
+    if (CPC.scr_half_res_y == 1) {
+        m_pCheckBoxHalfResY->SetCheckBoxState(CCheckBox::CHECKED);
+    }
+    m_pCheckBoxHalfResY->SetIsFocusable(true);
+    m_pLabelHalfResY      = new CLabel(CPoint(177, 111), m_pGroupBoxTabVideo, "Half vertical resolution");
     m_pCheckBoxShowFps      = new CCheckBox(CRect(CPoint(10, 90), 10, 10), m_pGroupBoxTabVideo);
     if (CPC.scr_fps == 1) {
         m_pCheckBoxShowFps->SetCheckBoxState(CCheckBox::CHECKED);
@@ -335,6 +347,8 @@ bool CapriceOptions::HandleMessage(CMessage* pMessage)
                 }
               }
               // 'Video' settings
+              CPC.scr_half_res_x = (m_pCheckBoxHalfResX->GetCheckBoxState() == CCheckBox::CHECKED)?1:0;
+              CPC.scr_half_res_y = (m_pCheckBoxHalfResY->GetCheckBoxState() == CCheckBox::CHECKED)?1:0;
               CPC.scr_fps = (m_pCheckBoxShowFps->GetCheckBoxState() == CCheckBox::CHECKED)?1:0;
               CPC.scr_window = (m_pCheckBoxFullScreen->GetCheckBoxState() == CCheckBox::CHECKED)?0:1;
               CPC.scr_preserve_aspect_ratio = (m_pCheckBoxAspectRatio->GetCheckBoxState() == CCheckBox::CHECKED)?1:0;
@@ -539,7 +553,14 @@ bool CapriceOptions::ProcessOptionChanges(t_CPC& CPC, bool saveChanges) {
     }
 
     // Restart video subsystem
-    if (CPC.model != m_oldCPCsettings.model || CPC.scr_window != m_oldCPCsettings.scr_window || CPC.scr_style != m_oldCPCsettings.scr_style || CPC.scr_scale != m_oldCPCsettings.scr_scale || CPC.scr_preserve_aspect_ratio != m_oldCPCsettings.scr_preserve_aspect_ratio)
+    if (CPC.model != m_oldCPCsettings.model 
+      || CPC.scr_window != m_oldCPCsettings.scr_window 
+      || CPC.scr_style != m_oldCPCsettings.scr_style 
+      || CPC.scr_scale != m_oldCPCsettings.scr_scale 
+      || CPC.scr_preserve_aspect_ratio != m_oldCPCsettings.scr_preserve_aspect_ratio
+      || CPC.scr_half_res_x != m_oldCPCsettings.scr_half_res_x
+      || CPC.scr_half_res_y != m_oldCPCsettings.scr_half_res_y
+    )
     {
         audio_pause();
         SDL_Delay(20);
