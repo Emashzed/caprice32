@@ -104,6 +104,9 @@ namespace wGui
       CDropDown* m_pDropDownSamplingRate; // Select audio sampling rate
       CLabel* m_pLabelSamplingRate;
 
+      CDropDown* m_pDropDownFiltering; // Audio filtering
+      CLabel* m_pLabelFiltering;
+
       CGroupBox* m_pGroupBoxChannels; 
       CGroupBox* m_pGroupBoxSampleSize;
 
