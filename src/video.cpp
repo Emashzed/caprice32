@@ -1409,44 +1409,57 @@ void filter_monitor(Uint8 *srcPtr, Uint32 srcPitch,
   const int SCAN_NUM   = 1;  // scanline brightness (~50%)
   const int SCAN_DEN   = 2;
 
-  while (height--) {
-    int i, ii;
+  for (int line = 0; line < height; line++) {
 
-    for (i = 0, ii = 0; i < width; ++i, ii += 2) {
-      Uint16 A = *(p + i);
-      Uint16 B = *(p + i + 1);
-      Uint16 C = *(p + i + nextlineSrc);
-      Uint16 D = *(p + i + nextlineSrc + 1);
+    if (line == height - 1) {
+      // Last line: just duplicate with scaling
+      for (int i = 0, ii = 0; i < width; ++i, ii += 2) {
+        Uint16 A = *(p + i);
+        Uint16 scaledA = rgb565_scale(A, GLOBAL_NUM, GLOBAL_DEN);
+        *(q + ii) = scaledA;
+        *(q + ii + 1) = scaledA;
+        Uint16 scanA = rgb565_scale(scaledA, SCAN_NUM, SCAN_DEN);
+        *(q + ii + nextlineDst) = scanA;
+        *(q + ii + nextlineDst + 1) = scanA;
+      }
+    } else {
+      int i, ii;
 
-      Uint16 topL  = A;
-      Uint16 topR  = INTERPOLATE(A, B);
-      Uint16 botL  = INTERPOLATE(A, C);
-      Uint16 botR  = Q_INTERPOLATE(A, B, C, D);
+      for (i = 0, ii = 0; i < width; ++i, ii += 2) {
+        Uint16 A = *(p + i);
+        Uint16 B = *(p + i + 1);
+        Uint16 C = *(p + i + nextlineSrc);
+        Uint16 D = *(p + i + nextlineSrc + 1);
 
-      Uint16 vMidL = INTERPOLATE(topL, botL);
-      Uint16 vMidR = INTERPOLATE(topR, botR);
+        Uint16 topL  = A;
+        Uint16 topR  = INTERPOLATE(A, B);
+        Uint16 botL  = INTERPOLATE(A, C);
+        Uint16 botR  = Q_INTERPOLATE(A, B, C, D);
 
-      topL = INTERPOLATE(topL, vMidL);
-      topR = INTERPOLATE(topR, vMidR);
+        Uint16 vMidL = INTERPOLATE(topL, botL);
+        Uint16 vMidR = INTERPOLATE(topR, botR);
 
-      botL = INTERPOLATE(botL, vMidL);
-      botR = INTERPOLATE(botR, vMidR);
+        topL = INTERPOLATE(topL, vMidL);
+        topR = INTERPOLATE(topR, vMidR);
 
-      topL = rgb565_scale(topL, GLOBAL_NUM, GLOBAL_DEN);
-      topR = rgb565_scale(topR, GLOBAL_NUM, GLOBAL_DEN);
-      botL = rgb565_scale(botL, GLOBAL_NUM, GLOBAL_DEN);
-      botR = rgb565_scale(botR, GLOBAL_NUM, GLOBAL_DEN);
+        botL = INTERPOLATE(botL, vMidL);
+        botR = INTERPOLATE(botR, vMidR);
 
-      *(q + ii)                 = topL;
-      *(q + ii + 1)             = topR;
+        topL = rgb565_scale(topL, GLOBAL_NUM, GLOBAL_DEN);
+        topR = rgb565_scale(topR, GLOBAL_NUM, GLOBAL_DEN);
+        botL = rgb565_scale(botL, GLOBAL_NUM, GLOBAL_DEN);
+        botR = rgb565_scale(botR, GLOBAL_NUM, GLOBAL_DEN);
 
-      Uint16 scanL = rgb565_scale(botL, SCAN_NUM, SCAN_DEN); // ~50%
-      Uint16 scanR = rgb565_scale(botR, SCAN_NUM, SCAN_DEN);
+        *(q + ii)                 = topL;
+        *(q + ii + 1)             = topR;
 
-      *(q + ii + nextlineDst)     = scanL;
-      *(q + ii + nextlineDst + 1) = scanR;
+        Uint16 scanL = rgb565_scale(botL, SCAN_NUM, SCAN_DEN); // ~50%
+        Uint16 scanR = rgb565_scale(botR, SCAN_NUM, SCAN_DEN);
+
+        *(q + ii + nextlineDst)     = scanL;
+        *(q + ii + nextlineDst + 1) = scanR;
+      }
     }
-
     p += nextlineSrc;
     q += nextlineDst << 1;
   }
@@ -1459,7 +1472,7 @@ void monitor_flip(video_plugin* t __attribute__((unused)))
   SDL_Rect src;
   SDL_Rect dst;
   compute_rects(&src,&dst);
-  filter_monitor(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch) + (pub->pitch), pub->pitch,
+  filter_monitor(static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch), pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), scaled->pitch, src.w, src.h);
   if (SDL_MUSTLOCK(scaled))
     SDL_UnlockSurface(scaled);
