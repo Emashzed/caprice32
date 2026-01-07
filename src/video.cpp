@@ -1487,8 +1487,16 @@ void monitor_flip(video_plugin* t __attribute__((unused)))
 //   - 4x4 expansion
 // ============================================================
 
-#define EXPAND 4
+#define HALF_MASK    0xF7DEu
+#define QUARTER_MASK 0xE79Cu
+#define SHIFT3_MASK  0xC718u
 
+#define LUT_CH 3
+#define LUT_BR 2
+#define LUT_SZ 65536
+
+static Uint16 *gTriadLUT = NULL;
+static Uint8 *gLumaLUT = NULL;
 
 // RGB565 helpers
 
@@ -1512,49 +1520,87 @@ static inline Uint16 pack565_from_rgbf(float rf, float gf, float bf) {
   return static_cast<Uint16>((((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)));
 }
 
-#define HALF_MASK    0xF7DEu
-#define QUARTER_MASK 0xE79Cu
-
+// 1/2 A + 1/2 B  (RGB565-safe)
 static inline Uint16 avg_1_1(Uint16 a, Uint16 b) {
-  return static_cast<Uint16> ((((a & HALF_MASK) + (b & HALF_MASK)) >> 1));
+  return (((a & HALF_MASK) + (b & HALF_MASK)) >> 1);
 }
 
-// Smear pixel: L/8 + R/8 + C*3/4  (RGB565-safe)
-static inline Uint16 smear(Uint16 C, Uint16 L, Uint16 R) {
-  if (C == L && C == R) return C;
-
-  Uint16 ch = static_cast<Uint16>(C & HALF_MASK);
-
-  // x = L/4 + R/4 + C/2
-  Uint32 x = ((static_cast<Uint32>(L & QUARTER_MASK) + static_cast<Uint32>(R & QUARTER_MASK)) >> 1);
-  x = (x + ch) >> 1;
-
-  // y = x/2 + C/2  -> L/8 + R/8 + 3/4 C
-  Uint32 y = ((static_cast<Uint32>(static_cast<Uint16>(x) & HALF_MASK) + static_cast<Uint32>(ch)) >> 1);
-  return static_cast<Uint16>(y);
+// 1/4 L + 1/2 C + 1/4 R  (RGB565-safe)
+static inline Uint16 avg_1_2_1(Uint16 L, Uint16 C, Uint16 R)
+{
+    return ((((L & QUARTER_MASK) + (R & QUARTER_MASK)) >> 1) + (C & HALF_MASK)) >> 1;
 }
 
-static const Uint8 PATTERN_CH[4][6] = {
-  {0,1,2,0,1,2},
-  {0,1,2,0,1,2},
-  {0,1,2,0,1,2},
-  {0,1,2,0,1,2},
-};
+// 3/4 C + 1/4 N  (RGB565-safe)
+static inline Uint16 avg_3_1(Uint16 C, Uint16 N)
+{
+    return ((C & HALF_MASK) >> 1) +
+           ((C & QUARTER_MASK) >> 2) +
+           ((N & QUARTER_MASK) >> 2);
+}
 
-static const Uint8 PATTERN_BR[4][6] = {
-  {1,1,1,1,1,1},
-  {1,1,1,0,0,0},
-  {1,1,1,1,1,1},
-  {0,0,0,1,1,1},
-};
+// 3/8 A + 5/8 B  (RGB565-safe)
+static inline Uint16 avg_3_5(Uint16 a, Uint16 b)
+{
+    return ((a & QUARTER_MASK) >> 2) +   // a/4
+           ((a & SHIFT3_MASK)  >> 3) +   // a/8
+           ((b & HALF_MASK)    >> 1) +   // b/2
+           ((b & SHIFT3_MASK)  >> 3);    // b/8
+}
 
-#define LUT_CH 3
-#define LUT_BR 2
-#define LUT_SZ 65536
+// function pointer to smear function
+typedef Uint16 (*smear_func)(Uint16 C, Uint16 L, Uint16 R);
+smear_func smear = nullptr;
 
-static uint16_t *gTriadLUT = NULL;
+static inline Uint16 smear_halfres(Uint16 C, Uint16 L, Uint16 R) {
+    // Luma-aware implementation that uses luma thresholds with light bleed
+    constexpr int thresh = 8;
 
-static inline uint16_t LUT_GET(int ch, int br, uint16_t src565) {
+    if (C == L && C == R) return C;
+
+    const int t = static_cast<int>(gLumaLUT[C]) + thresh;
+
+    const bool bleedL = static_cast<int>(gLumaLUT[L]) > t;
+    const bool bleedR = static_cast<int>(gLumaLUT[R]) > t;
+
+    if (bleedL) {
+        if (bleedR) 
+            return avg_1_2_1(L, C, R);
+        else
+            return avg_3_1(C, L);
+    } else {
+        if (bleedR) 
+            return avg_3_1(C, R);
+        else
+            return C;
+    }
+}
+
+static inline Uint16 smear_fullres(Uint16 C, Uint16 L, Uint16 R) {
+    // Luma-aware implementation that uses luma thresholds with heavy bleed
+    constexpr int thresh = 8;
+
+    if (C == L && C == R) return C;
+
+    const int t = static_cast<int>(gLumaLUT[C]) + thresh;
+
+    const bool bleedL = static_cast<int>(gLumaLUT[L]) > t;
+    const bool bleedR = static_cast<int>(gLumaLUT[R]) > t;
+
+    if (bleedL) {
+        if (bleedR) 
+            return avg_1_2_1(L, C, R);
+        else
+            return avg_3_5(L, C);
+    } else {
+        if (bleedR) 
+            return avg_3_5(R, C);
+        else
+            return C;
+    }
+}
+
+static inline Uint16 LUT_GET(int ch, int br, Uint16 src565) {
     // index = ((ch*2 + br)*65536 + src565)
     return gTriadLUT[ ((ch<<1) + br) * LUT_SZ + src565 ];
 }
@@ -1595,6 +1641,26 @@ static inline void apply_saturation(float &r, float &g, float &b, float sat) {
   r = y + (r - y) * sat;
   g = y + (g - y) * sat;
   b = y + (b - y) * sat;
+}
+
+void build_luma_lut_565()
+{
+    gLumaLUT = new Uint8[65536];
+
+    for (Uint32 p = 0; p < 65536u; ++p) {
+        const Uint32 r5 = (p >> 11) & 31u;
+        const Uint32 g6 = (p >> 5)  & 63u;
+        const Uint32 b5 =  p        & 31u;
+
+        // Expand RGB565 to 8-bit per channel (bit replication)
+        const Uint32 r8 = (r5 << 3) | (r5 >> 2);
+        const Uint32 g8 = (g6 << 2) | (g6 >> 4);
+        const Uint32 b8 = (b5 << 3) | (b5 >> 2);
+
+        // Integer luma approximation (0..255)
+        const Uint32 y = (r8 * 54u + g8 * 183u + b8 * 19u) >> 8;
+        gLumaLUT[p] = static_cast<Uint8>(y);
+    }
 }
 
 void build_triad_lut_565(Uint16 *triadLUT /*size 3*2*65536*/, const TriadParams &P)
@@ -1687,52 +1753,97 @@ void build_triad_lut_565(Uint16 *triadLUT /*size 3*2*65536*/, const TriadParams 
   }
 }
 
-#ifdef DEBUG
-bool save_triad_lut_bin(const char *path, const Uint16 *triadLUT) {
-  FILE *f = std::fopen(path, "wb");
-  if (!f) return false;
-  size_t n = std::fwrite(triadLUT, sizeof(Uint16), 3u * 2u * 65536u, f);
-  std::fclose(f);
-  return n == (3u * 2u * 65536u);
+void init_ctm644_lut() {
+  if (gTriadLUT == NULL) {
+    TriadParams P;
+
+    if (CPC.scr_half_res_x) {
+      P.BRIGHT_FACTOR      = 1.75f;
+      P.DIM_FACTOR         = 0.45f;
+      P.TRIAD_TINT         = 0.50f;
+      P.TRIAD_TINT_DIM     = 1.00f;
+      P.BLACK_FLOOR        = 12.0f;
+      P.CROSS_BLEED        = 0.10f;
+      P.MASK_GAIN          = 1.66f;
+      P.SUBPIX_FLOOR_8     = 3.80f;
+      P.GAIN_8             = 1.00f;
+      P.GAMMA              = 0.75f;
+      P.OUTPUT_BLACK_POINT = 0.00f;
+      P.OUTPUT_SATURATION  = 1.20f;
+    } else {
+      P.BRIGHT_FACTOR      = 2.8f;
+      P.DIM_FACTOR         = 0.6f;
+      P.TRIAD_TINT         = 0.3f;
+      P.TRIAD_TINT_DIM     = 0.8f;
+      P.BLACK_FLOOR        = 6.0f;
+      P.CROSS_BLEED        = 0.1f;
+      P.MASK_GAIN          = 2.2f;
+      P.SUBPIX_FLOOR_8     = 4.0f;
+      P.GAIN_8             = 1.15f;
+      P.GAMMA              = 0.90f;
+      P.OUTPUT_BLACK_POINT = 0.08f;
+      P.OUTPUT_SATURATION  = 1.0f;
+    }
+
+    gTriadLUT = new Uint16[3 * 2 * 65536];
+
+    build_triad_lut_565(gTriadLUT, P);
+  }
+
+  if (gLumaLUT == NULL) {
+      build_luma_lut_565();
+  }
 }
-#endif
 
-void init_triad_lut() {
-  if (gTriadLUT) return;
-
-  TriadParams P;
-  P.BRIGHT_FACTOR      = 1.75f;
-  P.DIM_FACTOR         = 0.45f;
-  P.TRIAD_TINT         = 0.50f;
-  P.TRIAD_TINT_DIM     = 1.00f;
-  P.BLACK_FLOOR        = 12.0f;
-  P.CROSS_BLEED        = 0.10f;
-  P.MASK_GAIN          = 1.66f;
-  P.SUBPIX_FLOOR_8     = 3.80f;
-  P.GAIN_8             = 1.00f;
-  P.GAMMA              = 0.75f;
-  P.OUTPUT_BLACK_POINT = 0.00f;
-  P.OUTPUT_SATURATION  = 1.20f;
-
-  gTriadLUT = new Uint16[3 * 2 * 65536];
-
-  build_triad_lut_565(gTriadLUT, P);
-#ifdef DEBUG
-  save_triad_lut_bin("triad_lut-out.bin", gTriadLUT);
-#endif
-}
-
-void free_triad_lut() {
+void free_ctm644_lut() {
     if (gTriadLUT) {
         delete[] gTriadLUT;
         gTriadLUT = NULL;
     }
+    if (gLumaLUT) {
+        delete[] gLumaLUT;
+        gLumaLUT = NULL;
+    }
 }
 
-// ------------------------------------------------------------
-// CTM644 filter
-// ------------------------------------------------------------
-void filter_crt_smear_lut4x4(
+#define CTM644_PATTERN_WIDTH_HALF 6
+#define CTM644_PATTERN_WIDTH_FULL 12
+
+int ctm644_pattern_width;
+Uint8 (*ctm644_pattern_ch)[12];
+Uint8 (*ctm644_pattern_br)[12];
+
+// Patterns for half-res-x mode
+static const Uint8 CTM644_PATTERN_CH_HALF[4][12] = {
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+  {0,1,2,0,1,2},
+};
+
+static const Uint8 CTM644_PATTERN_BR_HALF[4][12] = {
+  {1,1,1,1,1,1},
+  {1,1,1,0,0,0},
+  {1,1,1,1,1,1},
+  {0,0,0,1,1,1},
+};
+
+// Patterns for full-res-x mode
+static const Uint8 CTM644_PATTERN_CH_FULL[4][12] = {
+  {0,0,1,1,2,2,0,0,1,1,2,2},
+  {0,0,1,1,2,2,0,0,1,1,2,2},
+  {0,0,1,1,2,2,0,0,1,1,2,2},
+  {0,0,1,1,2,2,0,0,1,1,2,2},
+};
+
+static const Uint8 CTM644_PATTERN_BR_FULL[4][12] = {
+  {1,0,1,0,1,0,1,0,1,0,1,0},
+  {1,0,1,0,1,0,0,0,0,0,0,0},
+  {1,0,1,0,1,0,1,0,1,0,1,0},
+  {0,0,0,0,0,0,1,0,1,0,1,0},
+};
+
+void filter_ctm644(
   Uint8 *srcPtr, Uint32 srcPitch,
   Uint8 *dstPtr, Uint32 dstPitch,
   int width, int height
@@ -1746,7 +1857,10 @@ void filter_crt_smear_lut4x4(
   if (!gTriadLUT) return;
 
   int i, ii, j, jj;
-  for (j = 0, jj = 0; j < height; ++j, jj += EXPAND) {
+
+  const int pattern_modulo = ctm644_pattern_width - 1;
+
+  for (j = 0, jj = 0; j < height; ++j, jj += 4) {
 
     Uint16 *q0 = q;
     Uint16 *q1 = q + nextlineDst;
@@ -1760,7 +1874,7 @@ void filter_crt_smear_lut4x4(
 
     int pcx = 0;
 
-    for (i = 0, ii = 0; i < width; ++i, ii += EXPAND) {
+    for (i = 0, ii = 0; i < width; ++i, ii += 4) {
 
       const int im1 = (i == 0) ? 0 : (i - 1);
       const int ip1 = (i == width - 1) ? (width - 1) : (i + 1);
@@ -1772,35 +1886,35 @@ void filter_crt_smear_lut4x4(
       const Uint16 s = smear(C, L, R);
 
       const int pc0 = pcx;
-      const int pc1 = (pc0 == 5) ? 0 : (pc0 + 1);
-      const int pc2 = (pc1 == 5) ? 0 : (pc1 + 1);
-      const int pc3 = (pc2 == 5) ? 0 : (pc2 + 1);
+      const int pc1 = (pc0 == pattern_modulo) ? 0 : (pc0 + 1);
+      const int pc2 = (pc1 == pattern_modulo) ? 0 : (pc1 + 1);
+      const int pc3 = (pc2 == pattern_modulo) ? 0 : (pc2 + 1);
 
-      q0[ii + 0] = LUT_GET(PATTERN_CH[pr0][pc0], PATTERN_BR[pr0][pc0], s);
-      q0[ii + 1] = LUT_GET(PATTERN_CH[pr0][pc1], PATTERN_BR[pr0][pc1], s);
-      q0[ii + 2] = LUT_GET(PATTERN_CH[pr0][pc2], PATTERN_BR[pr0][pc2], s);
-      q0[ii + 3] = LUT_GET(PATTERN_CH[pr0][pc3], PATTERN_BR[pr0][pc3], s);
+      q0[ii + 0] = LUT_GET(ctm644_pattern_ch[pr0][pc0], ctm644_pattern_br[pr0][pc0], s);
+      q0[ii + 1] = LUT_GET(ctm644_pattern_ch[pr0][pc1], ctm644_pattern_br[pr0][pc1], s);
+      q0[ii + 2] = LUT_GET(ctm644_pattern_ch[pr0][pc2], ctm644_pattern_br[pr0][pc2], s);
+      q0[ii + 3] = LUT_GET(ctm644_pattern_ch[pr0][pc3], ctm644_pattern_br[pr0][pc3], s);
 
-      q1[ii + 0] = LUT_GET(PATTERN_CH[pr1][pc0], PATTERN_BR[pr1][pc0], s);
-      q1[ii + 1] = LUT_GET(PATTERN_CH[pr1][pc1], PATTERN_BR[pr1][pc1], s);
-      q1[ii + 2] = LUT_GET(PATTERN_CH[pr1][pc2], PATTERN_BR[pr1][pc2], s);
-      q1[ii + 3] = LUT_GET(PATTERN_CH[pr1][pc3], PATTERN_BR[pr1][pc3], s);
+      q1[ii + 0] = LUT_GET(ctm644_pattern_ch[pr1][pc0], ctm644_pattern_br[pr1][pc0], s);
+      q1[ii + 1] = LUT_GET(ctm644_pattern_ch[pr1][pc1], ctm644_pattern_br[pr1][pc1], s);
+      q1[ii + 2] = LUT_GET(ctm644_pattern_ch[pr1][pc2], ctm644_pattern_br[pr1][pc2], s);
+      q1[ii + 3] = LUT_GET(ctm644_pattern_ch[pr1][pc3], ctm644_pattern_br[pr1][pc3], s);
 
-      q2[ii + 0] = LUT_GET(PATTERN_CH[pr2][pc0], PATTERN_BR[pr2][pc0], s);
-      q2[ii + 1] = LUT_GET(PATTERN_CH[pr2][pc1], PATTERN_BR[pr2][pc1], s);
-      q2[ii + 2] = LUT_GET(PATTERN_CH[pr2][pc2], PATTERN_BR[pr2][pc2], s);
-      q2[ii + 3] = LUT_GET(PATTERN_CH[pr2][pc3], PATTERN_BR[pr2][pc3], s);
+      q2[ii + 0] = LUT_GET(ctm644_pattern_ch[pr2][pc0], ctm644_pattern_br[pr2][pc0], s);
+      q2[ii + 1] = LUT_GET(ctm644_pattern_ch[pr2][pc1], ctm644_pattern_br[pr2][pc1], s);
+      q2[ii + 2] = LUT_GET(ctm644_pattern_ch[pr2][pc2], ctm644_pattern_br[pr2][pc2], s);
+      q2[ii + 3] = LUT_GET(ctm644_pattern_ch[pr2][pc3], ctm644_pattern_br[pr2][pc3], s);
 
-      q3[ii + 0] = LUT_GET(PATTERN_CH[pr3][pc0], PATTERN_BR[pr3][pc0], s);
-      q3[ii + 1] = LUT_GET(PATTERN_CH[pr3][pc1], PATTERN_BR[pr3][pc1], s);
-      q3[ii + 2] = LUT_GET(PATTERN_CH[pr3][pc2], PATTERN_BR[pr3][pc2], s);
-      q3[ii + 3] = LUT_GET(PATTERN_CH[pr3][pc3], PATTERN_BR[pr3][pc3], s);
+      q3[ii + 0] = LUT_GET(ctm644_pattern_ch[pr3][pc0], ctm644_pattern_br[pr3][pc0], s);
+      q3[ii + 1] = LUT_GET(ctm644_pattern_ch[pr3][pc1], ctm644_pattern_br[pr3][pc1], s);
+      q3[ii + 2] = LUT_GET(ctm644_pattern_ch[pr3][pc2], ctm644_pattern_br[pr3][pc2], s);
+      q3[ii + 3] = LUT_GET(ctm644_pattern_ch[pr3][pc3], ctm644_pattern_br[pr3][pc3], s);
 
-      pcx += (EXPAND % 6);
-      if (pcx >= 6) pcx -= 6;
+      pcx += (4 % ctm644_pattern_width);
+      if (pcx >= ctm644_pattern_width) pcx -= ctm644_pattern_width;
     }
     p += nextlineSrc;
-    q += nextlineDst * EXPAND;
+    q += nextlineDst * 4;
   }
 }
 
@@ -1811,7 +1925,7 @@ void ctm644_flip(video_plugin* t __attribute__((unused)))
   SDL_Rect src;
   SDL_Rect dst;
   compute_rects(&src,&dst);
-  filter_crt_smear_lut4x4(
+  filter_ctm644(
       static_cast<Uint8*>(pub->pixels) + (2*src.x+src.y*pub->pitch), 
       pub->pitch,
       static_cast<Uint8*>(scaled->pixels) + (2*dst.x+dst.y*scaled->pitch), 
@@ -1825,13 +1939,26 @@ void ctm644_flip(video_plugin* t __attribute__((unused)))
 
 SDL_Surface* ctm644_init(video_plugin* t, int scale, bool fs)
 {
-  init_triad_lut();
+  init_ctm644_lut();
+
+  if (CPC.scr_half_res_x) {
+      ctm644_pattern_width = CTM644_PATTERN_WIDTH_HALF;
+      ctm644_pattern_ch = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_CH_HALF);
+      ctm644_pattern_br = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_BR_HALF);
+      smear = smear_halfres;
+  } else {
+      ctm644_pattern_width = CTM644_PATTERN_WIDTH_FULL;
+      ctm644_pattern_ch = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_CH_FULL);
+      ctm644_pattern_br = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_BR_FULL);
+      smear = smear_fullres;
+  }
+
   return swscale_init(t, scale, fs);
 }
 
 void ctm644_close()
 {
-  free_triad_lut();
+  free_ctm644_lut();
   swscale_close();
 }
 
