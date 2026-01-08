@@ -3232,6 +3232,14 @@ int cap32_main (int argc, char **argv)
             }
             break;
 
+            case SDL_DROPFILE: {
+               char* dropped_file = event.drop.file;
+               fillSlots({std::string(dropped_file)}, CPC);
+               loadSlots();
+               SDL_free(dropped_file);
+            break;
+        }
+
             // TODO: What if we were paused because of other reason than losing focus and then only lost focus
             //       the right thing to do here is to restore focus but keep paused... implementing this require
             //       keeping track of pause source, which will be a pain.
