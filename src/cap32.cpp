@@ -360,7 +360,47 @@ void ga_memory_manager ()
    }
 }
 
+// - Synchronization ---------------------
 
+static uint64_t gPerfFreq = 0;           // ticks per second
+static uint64_t gPerfOffset = 0;         // ticks between "cycle-count" wakeups
+static uint64_t gPerfTarget = 0;         // next "cycle-count" deadline in perf ticks
+static uint64_t gPerfTargetFPS = 0;      // next FPS counter update time in perf ticks
+static uint64_t gPerfBase = 0;           // floor(freq/50)
+static uint64_t gPerfRem  = 0;           // freq%50
+static uint64_t gPerfErr  = 0;           // accumulator
+
+static SDL_sem* gAudioSem = nullptr;
+
+static inline uint64_t perf_now() {
+  return SDL_GetPerformanceCounter();
+}
+
+static inline uint64_t ms_to_perf(uint64_t ms) {
+  return (ms * gPerfFreq) / 1000ULL;
+}
+
+static inline uint64_t perf_to_ms(uint64_t ticks) {
+  return (ticks * 1000ULL) / gPerfFreq;
+}
+
+static inline void wait_until_perf(uint64_t deadline, uint64_t freq)
+{
+  for (;;) {
+    uint64_t now = SDL_GetPerformanceCounter();
+    int64_t remaining =  static_cast<int64_t> (deadline - now);
+    if (remaining <= 0) return;
+
+    uint64_t remaining_us =  static_cast<int64_t> ((remaining * 1000000LL) /  static_cast<int64_t> (freq));
+
+    if (remaining_us > 1500) {
+      uint64_t sleep_ms = (remaining_us - 500) / 1000;
+      if (sleep_ms > 0) SDL_Delay(static_cast<Uint32> (sleep_ms));
+    } else {
+      std::this_thread::yield();
+    }
+  }
+}
 
 byte z80_IN_handler (reg_pair port)
 {
@@ -1425,6 +1465,7 @@ void audio_update (void *userdata __attribute__((unused)), byte *stream, int len
     }
     memcpy(stream, pSamples, len);
     dwSndBufferCopied = 1;
+    if (gAudioSem) SDL_SemPost(gAudioSem);
   } else {
     LOG_VERBOSE("Audio: audio_update: skipping the copy of " << len << " bytes: sound buffer not ready");
   }
@@ -1786,16 +1827,21 @@ void joysticks_shutdown ()
    SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
 }
 
-
-
 void update_timings()
 {
-   dwTicksOffset = static_cast<int>(FRAME_PERIOD_MS / (CPC.speed/CPC_BASE_FREQUENCY_MHZ));
-   dwTicksTarget = SDL_GetTicks();
-   dwTicksTargetFPS = dwTicksTarget;
-   dwTicksTarget += dwTicksOffset;
-   // These are only used for frames timing if sound is disabled. Otherwise timing is controlled by the PSG.
-   LOG_VERBOSE("Timing: First frame at " << dwTicksTargetFPS << " - next frame in " << dwTicksOffset << " ( " << FRAME_PERIOD_MS << "/(" << CPC.speed << "/" << CPC_BASE_FREQUENCY_MHZ << ") ) at " << dwTicksTarget);
+   // existing ms offset is fine to keep (for logs / legacy)
+   dwTicksOffset = static_cast<int>(FRAME_PERIOD_MS / (CPC.speed / CPC_BASE_FREQUENCY_MHZ));
+
+   gPerfFreq = SDL_GetPerformanceFrequency();
+   gPerfBase = gPerfFreq / 50;
+   gPerfRem  = gPerfFreq % 50;
+   gPerfErr  = 0;
+
+   gPerfTarget = perf_now() + gPerfBase;   // first deadline
+   gPerfErr = gPerfRem;
+   if (gPerfErr >= 50) { gPerfTarget += 1; gPerfErr -= 50; }
+
+   LOG_VERBOSE("Timing: next slice in " << dwTicksOffset << " ms (perf ticks=" << gPerfOffset << ")");
 }
 
 // Recalculate emulation speed (to verify, seems to work reasonably well)
@@ -2847,6 +2893,15 @@ int cap32_main (int argc, char **argv)
       exit(-1);
    }
 
+   SDL_SetHint(SDL_HINT_TIMER_RESOLUTION, "1");
+   gPerfFreq = SDL_GetPerformanceFrequency();
+
+   gAudioSem = SDL_CreateSemaphore(0);
+   if (!gAudioSem) {
+      LOG_ERROR("SDL_CreateSemaphore failed: " << SDL_GetError());
+      // fallback: keep old behavior if needed
+   }   
+
    #ifndef APP_PATH
    if(getcwd(chAppPath, sizeof(chAppPath)-1) == nullptr) {
       fprintf(stderr, "getcwd failed: %s\n", strerror(errno));
@@ -3272,30 +3327,48 @@ int cap32_main (int argc, char **argv)
       }
 
       if (!CPC.paused) { // run the emulation, as long as the user doesn't pause it
-         dwTicks = SDL_GetTicks();
-         if (dwTicks >= dwTicksTargetFPS) { // update FPS counter?
+         uint64_t now = perf_now();
+         if (now >= gPerfTargetFPS) {
             dwFPS = dwFrameCount;
             dwFrameCount = 0;
-            dwTicksTargetFPS = dwTicks + 1000; // prep counter for the next run
+            gPerfTargetFPS += gPerfFreq;
+            if (now - gPerfTargetFPS > 5 * gPerfFreq) gPerfTargetFPS = now + gPerfFreq;
          }
 
          if (CPC.limit_speed) { // limit to original CPC speed?
             if (CPC.snd_enabled) {
                if (iExitCondition == EC_SOUND_BUFFER) { // Emulation filled a sound buffer.
                   if (!dwSndBufferCopied) {
-                     continue; // delay emulation until our audio callback copied and played the buffer
+                  if (gAudioSem) {
+                     // Wait until audio callback consumes/copies (timeout as safety net)
+                     SDL_SemWaitTimeout(gAudioSem, 5);
+                  } else {
+                     // Fallback if we don't have semaphore support
+                     SDL_Delay(0);
+                     std::this_thread::yield();
+                  }
+                  continue;
                   }
                   dwSndBufferCopied = 0;
                }
             } else if (iExitCondition == EC_CYCLE_COUNT) {
-               dwTicks = SDL_GetTicks();
-               if (dwTicks < dwTicksTarget) { // limit speed ?
-                  if (dwTicksTarget - dwTicks > POLL_INTERVAL_MS) { // No need to burn cycles if next event is far away
-                     std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
-                  }
-                  continue; // delay emulation
+               uint64_t now = perf_now();
+
+               if (now < gPerfTarget) {
+                  wait_until_perf(gPerfTarget, gPerfFreq);
+                  now = perf_now();
                }
-               dwTicksTarget = dwTicks + dwTicksOffset; // prep counter for the next run
+
+               gPerfTarget += gPerfBase;
+               gPerfErr += gPerfRem;
+               if (gPerfErr >= 50) {
+                  gPerfTarget += 1;
+                  gPerfErr -= 50;
+               }
+
+               if (static_cast<int64_t> (now - gPerfTarget) >  static_cast<int64_t> (5 * gPerfOffset)) {
+                  gPerfTarget = now + gPerfOffset;
+               }
             }
          }
 
