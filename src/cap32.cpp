@@ -360,7 +360,25 @@ void ga_memory_manager ()
    }
 }
 
+// - Synchronization ---------------------
 
+static uint64_t gPerfFreq = 0;           // ticks per second
+static uint64_t gPerfOffset = 0;         // ticks between "cycle-count" wakeups
+static uint64_t gPerfTarget = 0;         // next "cycle-count" deadline in perf ticks
+static uint64_t gPerfTargetFPS = 0;      // next FPS counter update time in perf ticks
+
+static inline uint64_t perf_now() {
+  return SDL_GetPerformanceCounter();
+}
+
+static inline uint64_t ms_to_perf(uint64_t ms) {
+  // exact integer conversion; ok for ms <= a few seconds
+  return (ms * gPerfFreq) / 1000ULL;
+}
+
+static inline uint64_t perf_to_ms(uint64_t ticks) {
+  return (ticks * 1000ULL) / gPerfFreq;
+}
 
 byte z80_IN_handler (reg_pair port)
 {
@@ -1786,16 +1804,20 @@ void joysticks_shutdown ()
    SDL_QuitSubSystem(SDL_INIT_JOYSTICK);
 }
 
-
-
 void update_timings()
 {
-   dwTicksOffset = static_cast<int>(FRAME_PERIOD_MS / (CPC.speed/CPC_BASE_FREQUENCY_MHZ));
-   dwTicksTarget = SDL_GetTicks();
-   dwTicksTargetFPS = dwTicksTarget;
-   dwTicksTarget += dwTicksOffset;
-   // These are only used for frames timing if sound is disabled. Otherwise timing is controlled by the PSG.
-   LOG_VERBOSE("Timing: First frame at " << dwTicksTargetFPS << " - next frame in " << dwTicksOffset << " ( " << FRAME_PERIOD_MS << "/(" << CPC.speed << "/" << CPC_BASE_FREQUENCY_MHZ << ") ) at " << dwTicksTarget);
+   // existing ms offset is fine to keep (for logs / legacy)
+   dwTicksOffset = static_cast<int>(FRAME_PERIOD_MS / (CPC.speed / CPC_BASE_FREQUENCY_MHZ));
+
+   // high precision equivalents
+   if (gPerfFreq == 0) gPerfFreq = SDL_GetPerformanceFrequency();
+
+   gPerfOffset    = ms_to_perf(dwTicksOffset);
+   uint64_t now   = perf_now();
+   gPerfTargetFPS = now;
+   gPerfTarget    = now + gPerfOffset;
+
+   LOG_VERBOSE("Timing: next slice in " << dwTicksOffset << " ms (perf ticks=" << gPerfOffset << ")");
 }
 
 // Recalculate emulation speed (to verify, seems to work reasonably well)
@@ -2847,6 +2869,8 @@ int cap32_main (int argc, char **argv)
       exit(-1);
    }
 
+   gPerfFreq = SDL_GetPerformanceFrequency();
+
    #ifndef APP_PATH
    if(getcwd(chAppPath, sizeof(chAppPath)-1) == nullptr) {
       fprintf(stderr, "getcwd failed: %s\n", strerror(errno));
@@ -3272,11 +3296,11 @@ int cap32_main (int argc, char **argv)
       }
 
       if (!CPC.paused) { // run the emulation, as long as the user doesn't pause it
-         dwTicks = SDL_GetTicks();
-         if (dwTicks >= dwTicksTargetFPS) { // update FPS counter?
+         uint64_t now = perf_now();
+         if (now >= gPerfTargetFPS) {
             dwFPS = dwFrameCount;
             dwFrameCount = 0;
-            dwTicksTargetFPS = dwTicks + 1000; // prep counter for the next run
+            gPerfTargetFPS = now + gPerfFreq;
          }
 
          if (CPC.limit_speed) { // limit to original CPC speed?
@@ -3288,14 +3312,16 @@ int cap32_main (int argc, char **argv)
                   dwSndBufferCopied = 0;
                }
             } else if (iExitCondition == EC_CYCLE_COUNT) {
-               dwTicks = SDL_GetTicks();
-               if (dwTicks < dwTicksTarget) { // limit speed ?
-                  if (dwTicksTarget - dwTicks > POLL_INTERVAL_MS) { // No need to burn cycles if next event is far away
+               uint64_t now = perf_now();
+               if (now < gPerfTarget) {
+                  uint64_t remaining_ticks = gPerfTarget - now;
+                  uint64_t remaining_ms    = perf_to_ms(remaining_ticks);
+                  if (remaining_ms > POLL_INTERVAL_MS) {
                      std::this_thread::sleep_for(std::chrono::milliseconds(POLL_INTERVAL_MS));
                   }
-                  continue; // delay emulation
+                  continue;
                }
-               dwTicksTarget = dwTicks + dwTicksOffset; // prep counter for the next run
+               gPerfTarget = now + gPerfOffset;
             }
          }
 
