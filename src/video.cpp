@@ -106,7 +106,17 @@ int renderer_bpp(SDL_Renderer *sdl_renderer)
 /* ------------------------------------------------------------------------------------ */
 SDL_Surface* direct_init(video_plugin* t __attribute__((unused)), int scale, bool fs)
 {
-  Uint32 flags = (fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_SHOWN) | SDL_WINDOW_ALLOW_HIGHDPI;
+  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
+  if (fs) {
+    if (CPC.scr_full_screen_exclusive) {
+      flags |= SDL_WINDOW_FULLSCREEN;
+    } else {
+      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    }
+  } else {
+    flags |= SDL_WINDOW_SHOWN;
+  }  
+  
   SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH*scale, CPC_VISIBLE_SCR_HEIGHT*scale, flags, &mainSDLWindow, &renderer);
   if (!mainSDLWindow || !renderer) return nullptr;
   SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
@@ -185,7 +195,19 @@ SDL_Surface* glscale_init(video_plugin* t __attribute__((unused)), int scale, bo
 
   int width = CPC_VISIBLE_SCR_WIDTH*scale;
   int height = CPC_VISIBLE_SCR_HEIGHT*scale;
-  SDL_CreateWindowAndRenderer(width, height, (fs?SDL_WINDOW_FULLSCREEN_DESKTOP:SDL_WINDOW_SHOWN) | SDL_WINDOW_OPENGL, &mainSDLWindow, &renderer);
+
+  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL;
+  if (fs) {
+    if (CPC.scr_full_screen_exclusive) {
+      flags |= SDL_WINDOW_FULLSCREEN;
+    } else {
+      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    }
+  } else {
+    flags |= SDL_WINDOW_SHOWN;
+  }
+    
+  SDL_CreateWindowAndRenderer(width, height, flags, &mainSDLWindow, &renderer);
   if (!mainSDLWindow || !renderer) return nullptr;
   if (fs) {
     SDL_DisplayMode display;
@@ -501,7 +523,16 @@ void compute_rects_for_tests(SDL_Rect* src, SDL_Rect* dst)
 
 SDL_Surface* swscale_init(video_plugin* t, int scale, bool fs)
 {
-  Uint32 flags = (fs ? SDL_WINDOW_FULLSCREEN_DESKTOP : SDL_WINDOW_SHOWN) | SDL_WINDOW_ALLOW_HIGHDPI;
+  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
+  if (fs) {
+    if (CPC.scr_full_screen_exclusive) {
+      flags |= SDL_WINDOW_FULLSCREEN;
+    } else {
+      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+    }
+  } else {
+    flags |= SDL_WINDOW_SHOWN;
+  }
 
   int window_width = CPC_VISIBLE_SCR_WIDTH * scale;
   int window_height = CPC_VISIBLE_SCR_HEIGHT * scale;

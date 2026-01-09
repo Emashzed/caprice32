@@ -1905,6 +1905,7 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
       CPC.scr_intensity = 10;
    }
    CPC.scr_window = conf.getIntValue("video", "scr_window", 1) & 1;
+   CPC.scr_full_screen_exclusive = conf.getIntValue("video", "scr_full_screen_exclusive", 0) & 1;
 
    CPC.scr_green_mode = conf.getIntValue("video", "scr_green_mode", 0) & 1;
    CPC.scr_green_blue_percent = conf.getIntValue("video", "scr_green_blue_percent", 0);
@@ -1998,6 +1999,7 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
    conf.setIntValue("video", "scr_intensity", CPC.scr_intensity);
    conf.setIntValue("video", "scr_remanency", CPC.scr_remanency);
    conf.setIntValue("video", "scr_window", CPC.scr_window);
+   conf.setIntValue("video", "scr_full_screen_exclusive", CPC.scr_full_screen_exclusive);
 
    conf.setIntValue("devtools", "scale", CPC.devtools_scale);
 
