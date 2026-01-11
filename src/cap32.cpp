@@ -3417,6 +3417,12 @@ int cap32_main (int argc, char **argv)
                print(static_cast<byte *>(back_surface->pixels) + CPC.scr_line_offs, chStr, true); // display the frames per second counter
             }
             asic_draw_sprites();
+            if (CPC.scr_led && FDC.led) {
+               Uint32* pixels = reinterpret_cast<Uint32*>(back_surface->pixels);
+               Uint32 *p = pixels + (back_surface->pitch / 4) - 4;
+               Uint32 *q = p + (back_surface->pitch / 4);
+               p[0] = p[1] = p[2] = p[3] = q[0] = q[1] = q[2] = q[3] =0xF800F800;
+            }
             video_display(); // update PC display
             if (take_screenshot) {
               dumpScreen();
