@@ -101,10 +101,7 @@ int renderer_bpp(SDL_Renderer *sdl_renderer)
   return SDL_BITSPERPIXEL(infos.texture_formats[0]);
 }
 
-/* ------------------------------------------------------------------------------------ */
-/* Unfiltered video plugin (direct blit) ---------------------------------------------- */
-/* ------------------------------------------------------------------------------------ */
-SDL_Surface* direct_init(video_plugin* t __attribute__((unused)), int scale, bool fs)
+int video_init(int scale, bool fs) 
 {
   Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
   if (fs) {
@@ -115,11 +112,22 @@ SDL_Surface* direct_init(video_plugin* t __attribute__((unused)), int scale, boo
     }
   } else {
     flags |= SDL_WINDOW_SHOWN;
-  }  
-  
-  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH*scale, CPC_VISIBLE_SCR_HEIGHT*scale, flags, &mainSDLWindow, &renderer);
-  if (!mainSDLWindow || !renderer) return nullptr;
+  }
+
+  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH * scale, CPC_VISIBLE_SCR_HEIGHT * scale, flags, &mainSDLWindow, &renderer);
+  if (!mainSDLWindow || !renderer) return 0;
   SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
+
+  return 1;
+}
+
+/* ------------------------------------------------------------------------------------ */
+/* Unfiltered video plugin (direct blit) ---------------------------------------------- */
+/* ------------------------------------------------------------------------------------ */
+SDL_Surface* direct_init(video_plugin* t __attribute__((unused)), int scale, bool fs)
+{
+  int video_init_result = video_init(scale, fs);
+  if (video_init_result == 0) return nullptr;
   
   int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
   int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
@@ -196,19 +204,9 @@ SDL_Surface* glscale_init(video_plugin* t __attribute__((unused)), int scale, bo
   int width = CPC_VISIBLE_SCR_WIDTH*scale;
   int height = CPC_VISIBLE_SCR_HEIGHT*scale;
 
-  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_OPENGL;
-  if (fs) {
-    if (CPC.scr_full_screen_exclusive) {
-      flags |= SDL_WINDOW_FULLSCREEN;
-    } else {
-      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    }
-  } else {
-    flags |= SDL_WINDOW_SHOWN;
-  }
-    
-  SDL_CreateWindowAndRenderer(width, height, flags, &mainSDLWindow, &renderer);
-  if (!mainSDLWindow || !renderer) return nullptr;
+  int video_init_result = video_init(scale, fs);
+  if (video_init_result == 0) return nullptr;
+
   if (fs) {
     SDL_DisplayMode display;
     SDL_GetCurrentDisplayMode(0, &display);
@@ -523,29 +521,14 @@ void compute_rects_for_tests(SDL_Rect* src, SDL_Rect* dst)
 
 SDL_Surface* swscale_init(video_plugin* t, int scale, bool fs)
 {
-  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
-  if (fs) {
-    if (CPC.scr_full_screen_exclusive) {
-      flags |= SDL_WINDOW_FULLSCREEN;
-    } else {
-      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    }
-  } else {
-    flags |= SDL_WINDOW_SHOWN;
-  }
-
-  int window_width = CPC_VISIBLE_SCR_WIDTH * scale;
-  int window_height = CPC_VISIBLE_SCR_HEIGHT * scale;
+  int video_init_result = video_init(scale, fs);
+  if (video_init_result == 0) return nullptr;
 
   int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
   int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
 
   int scaled_width = surface_width * t->multiplier_x;
   int scaled_height = surface_height * t->multiplier_y;
-
-  SDL_CreateWindowAndRenderer(window_width, window_height, flags, &mainSDLWindow, &renderer);
-  if (!mainSDLWindow || !renderer) return nullptr;
-  SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
 
   vid = SDL_CreateRGBSurface(0, scaled_width, scaled_height, renderer_bpp(renderer), 0, 0, 0, 0);
   if (!vid) return nullptr;
