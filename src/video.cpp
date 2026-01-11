@@ -1579,58 +1579,6 @@ static inline Uint16 avg_3_5(Uint16 a, Uint16 b)
            ((b & SHIFT3_MASK)  >> 3);    // b/8
 }
 
-// function pointer to smear function
-typedef Uint16 (*smear_func)(Uint16 C, Uint16 L, Uint16 R);
-smear_func smear = nullptr;
-
-static inline Uint16 smear_halfres(Uint16 C, Uint16 L, Uint16 R) {
-    // Luma-aware implementation that uses luma thresholds with light bleed
-    constexpr int thresh = 8;
-
-    if (C == L && C == R) return C;
-
-    const int t = static_cast<int>(gLumaLUT[C]) + thresh;
-
-    const bool bleedL = static_cast<int>(gLumaLUT[L]) > t;
-    const bool bleedR = static_cast<int>(gLumaLUT[R]) > t;
-
-    if (bleedL) {
-        if (bleedR) 
-            return avg_1_2_1(L, C, R);
-        else
-            return avg_3_1(C, L);
-    } else {
-        if (bleedR) 
-            return avg_3_1(C, R);
-        else
-            return C;
-    }
-}
-
-static inline Uint16 smear_fullres(Uint16 C, Uint16 L, Uint16 R) {
-    // Luma-aware implementation that uses luma thresholds with heavy bleed
-    constexpr int thresh = 8;
-
-    if (C == L && C == R) return C;
-
-    const int t = static_cast<int>(gLumaLUT[C]) + thresh;
-
-    const bool bleedL = static_cast<int>(gLumaLUT[L]) > t;
-    const bool bleedR = static_cast<int>(gLumaLUT[R]) > t;
-
-    if (bleedL) {
-        if (bleedR) 
-            return avg_1_2_1(L, C, R);
-        else
-            return avg_3_5(L, C);
-    } else {
-        if (bleedR) 
-            return avg_3_5(R, C);
-        else
-            return C;
-    }
-}
-
 static inline Uint16 LUT_GET(int ch, int br, Uint16 src565) {
     // index = ((ch*2 + br)*65536 + src565)
     return gTriadLUT[ ((ch<<1) + br) * LUT_SZ + src565 ];
@@ -1840,7 +1788,6 @@ void free_ctm644_lut() {
 #define CTM644_PATTERN_WIDTH_HALF 6
 #define CTM644_PATTERN_WIDTH_FULL 12
 
-int ctm644_pattern_width;
 Uint8 (*ctm644_pattern_ch)[12];
 Uint8 (*ctm644_pattern_br)[12];
 
@@ -1874,24 +1821,46 @@ static const Uint8 CTM644_PATTERN_BR_FULL[4][12] = {
   {0,0,0,0,0,0,1,0,1,0,1,0},
 };
 
-void filter_ctm644(
+template<bool FULLRES>
+static inline Uint16 smear_impl(Uint16 C, Uint16 L, Uint16 R) {
+    // Luma-aware implementation that uses luma thresholds
+    constexpr int thresh = 8;
+
+    if (C == L && C == R) return C;
+
+    const int t = static_cast<int>(gLumaLUT[C]) + thresh;
+
+    const bool bleedL = static_cast<int>(gLumaLUT[L]) > t;
+    const bool bleedR = static_cast<int>(gLumaLUT[R]) > t;
+
+    if (!bleedL && !bleedR) return C;
+    if (bleedL && bleedR)   return avg_1_2_1(L, C, R);
+
+    // for fullres we need heavier pixel bleeding
+    if constexpr (FULLRES)  return bleedL ? avg_3_5(L, C) : avg_3_5(R, C);
+    else                    return bleedL ? avg_3_1(C, L) : avg_3_1(C, R);
+}
+
+template<
+    bool FULLRES,
+    int PATTERN_WIDTH,
+    int PATTERN_MODULO
+>
+void filter_ctm644_impl(
   Uint8 *srcPtr, Uint32 srcPitch,
   Uint8 *dstPtr, Uint32 dstPitch,
   int width, int height
 ){
+
+  constexpr int PC_STEP = 4 % PATTERN_WIDTH;
+  
   const Uint32 nextlineSrc = srcPitch / sizeof(Uint16);
   const Uint32 nextlineDst = dstPitch / sizeof(Uint16);
 
   Uint16 *p = reinterpret_cast<Uint16*> (srcPtr);
   Uint16 *q = reinterpret_cast<Uint16*> (dstPtr);
 
-  if (!gTriadLUT) return;
-
-  int i, ii, j, jj;
-
-  const int pattern_modulo = ctm644_pattern_width - 1;
-
-  for (j = 0, jj = 0; j < height; ++j, jj += 4) {
+  for (int j = 0, jj = 0; j < height; ++j, jj += 4) {
 
     Uint16 *q0 = q;
     Uint16 *q1 = q + nextlineDst;
@@ -1905,21 +1874,55 @@ void filter_ctm644(
 
     int pcx = 0;
 
-    for (i = 0, ii = 0; i < width; ++i, ii += 4) {
-
-      const int im1 = (i == 0) ? 0 : (i - 1);
-      const int ip1 = (i == width - 1) ? (width - 1) : (i + 1);
-
-      const Uint16 C = p[i];
-      const Uint16 L = p[im1];
-      const Uint16 R = p[ip1];
-
-      const Uint16 s = smear(C, L, R);
+    // ---- i = 0 (left edge) ----
+    {
+      const Uint16 C = p[0];
+      const Uint16 L = C;
+      const Uint16 R = p[1];
+      const Uint16 s = smear_impl<FULLRES>(C, L, R);
 
       const int pc0 = pcx;
-      const int pc1 = (pc0 == pattern_modulo) ? 0 : (pc0 + 1);
-      const int pc2 = (pc1 == pattern_modulo) ? 0 : (pc1 + 1);
-      const int pc3 = (pc2 == pattern_modulo) ? 0 : (pc2 + 1);
+      const int pc1 = (pc0 == PATTERN_MODULO) ? 0 : (pc0 + 1);
+      const int pc2 = (pc1 == PATTERN_MODULO) ? 0 : (pc1 + 1);
+      const int pc3 = (pc2 == PATTERN_MODULO) ? 0 : (pc2 + 1);
+
+      q0[0] = LUT_GET(ctm644_pattern_ch[pr0][pc0], ctm644_pattern_br[pr0][pc0], s);
+      q0[1] = LUT_GET(ctm644_pattern_ch[pr0][pc1], ctm644_pattern_br[pr0][pc1], s);
+      q0[2] = LUT_GET(ctm644_pattern_ch[pr0][pc2], ctm644_pattern_br[pr0][pc2], s);
+      q0[3] = LUT_GET(ctm644_pattern_ch[pr0][pc3], ctm644_pattern_br[pr0][pc3], s);
+
+      q1[0] = LUT_GET(ctm644_pattern_ch[pr1][pc0], ctm644_pattern_br[pr1][pc0], s);
+      q1[1] = LUT_GET(ctm644_pattern_ch[pr1][pc1], ctm644_pattern_br[pr1][pc1], s);
+      q1[2] = LUT_GET(ctm644_pattern_ch[pr1][pc2], ctm644_pattern_br[pr1][pc2], s);
+      q1[3] = LUT_GET(ctm644_pattern_ch[pr1][pc3], ctm644_pattern_br[pr1][pc3], s);
+
+      q2[0] = LUT_GET(ctm644_pattern_ch[pr2][pc0], ctm644_pattern_br[pr2][pc0], s);
+      q2[1] = LUT_GET(ctm644_pattern_ch[pr2][pc1], ctm644_pattern_br[pr2][pc1], s);
+      q2[2] = LUT_GET(ctm644_pattern_ch[pr2][pc2], ctm644_pattern_br[pr2][pc2], s);
+      q2[3] = LUT_GET(ctm644_pattern_ch[pr2][pc3], ctm644_pattern_br[pr2][pc3], s);
+
+      q3[0] = LUT_GET(ctm644_pattern_ch[pr3][pc0], ctm644_pattern_br[pr3][pc0], s);
+      q3[1] = LUT_GET(ctm644_pattern_ch[pr3][pc1], ctm644_pattern_br[pr3][pc1], s);
+      q3[2] = LUT_GET(ctm644_pattern_ch[pr3][pc2], ctm644_pattern_br[pr3][pc2], s);
+      q3[3] = LUT_GET(ctm644_pattern_ch[pr3][pc3], ctm644_pattern_br[pr3][pc3], s);
+
+      pcx += PC_STEP;
+      if (pcx >= PATTERN_WIDTH) pcx -= PATTERN_WIDTH;
+    }
+
+    // ---- middle: i = 1 .. width-2 ----
+    for (int i = 1, ii = 4; i < width - 1; ++i, ii += 4) {    
+
+      const Uint16 L = p[i - 1];
+      const Uint16 C = p[i];
+      const Uint16 R = p[i + 1];
+
+      const Uint16 s = smear_impl<FULLRES>(C, L, R);
+
+      const int pc0 = pcx;
+      const int pc1 = (pc0 == PATTERN_MODULO) ? 0 : (pc0 + 1);
+      const int pc2 = (pc1 == PATTERN_MODULO) ? 0 : (pc1 + 1);
+      const int pc3 = (pc2 == PATTERN_MODULO) ? 0 : (pc2 + 1);
 
       q0[ii + 0] = LUT_GET(ctm644_pattern_ch[pr0][pc0], ctm644_pattern_br[pr0][pc0], s);
       q0[ii + 1] = LUT_GET(ctm644_pattern_ch[pr0][pc1], ctm644_pattern_br[pr0][pc1], s);
@@ -1941,12 +1944,60 @@ void filter_ctm644(
       q3[ii + 2] = LUT_GET(ctm644_pattern_ch[pr3][pc2], ctm644_pattern_br[pr3][pc2], s);
       q3[ii + 3] = LUT_GET(ctm644_pattern_ch[pr3][pc3], ctm644_pattern_br[pr3][pc3], s);
 
-      pcx += (4 % ctm644_pattern_width);
-      if (pcx >= ctm644_pattern_width) pcx -= ctm644_pattern_width;
+      pcx += PC_STEP;
+      if (pcx >= PATTERN_WIDTH) pcx -= PATTERN_WIDTH;
     }
+
+    // ---- i = width-1 (right edge) ----
+    {
+      const int i  = width - 1;
+      const int ii = i * 4;
+
+      const Uint16 C = p[i];
+      const Uint16 L = p[i - 1];
+      const Uint16 R = C;
+      const Uint16 s = smear_impl<FULLRES>(C, L, R);
+
+      const int pc0 = pcx;
+      const int pc1 = (pc0 == PATTERN_MODULO) ? 0 : (pc0 + 1);
+      const int pc2 = (pc1 == PATTERN_MODULO) ? 0 : (pc1 + 1);
+      const int pc3 = (pc2 == PATTERN_MODULO) ? 0 : (pc2 + 1);
+
+      q0[ii + 0] = LUT_GET(ctm644_pattern_ch[pr0][pc0], ctm644_pattern_br[pr0][pc0], s);
+      q0[ii + 1] = LUT_GET(ctm644_pattern_ch[pr0][pc1], ctm644_pattern_br[pr0][pc1], s);
+      q0[ii + 2] = LUT_GET(ctm644_pattern_ch[pr0][pc2], ctm644_pattern_br[pr0][pc2], s);
+      q0[ii + 3] = LUT_GET(ctm644_pattern_ch[pr0][pc3], ctm644_pattern_br[pr0][pc3], s);
+
+      q1[ii + 0] = LUT_GET(ctm644_pattern_ch[pr1][pc0], ctm644_pattern_br[pr1][pc0], s);
+      q1[ii + 1] = LUT_GET(ctm644_pattern_ch[pr1][pc1], ctm644_pattern_br[pr1][pc1], s);
+      q1[ii + 2] = LUT_GET(ctm644_pattern_ch[pr1][pc2], ctm644_pattern_br[pr1][pc2], s);
+      q1[ii + 3] = LUT_GET(ctm644_pattern_ch[pr1][pc3], ctm644_pattern_br[pr1][pc3], s);
+
+      q2[ii + 0] = LUT_GET(ctm644_pattern_ch[pr2][pc0], ctm644_pattern_br[pr2][pc0], s);
+      q2[ii + 1] = LUT_GET(ctm644_pattern_ch[pr2][pc1], ctm644_pattern_br[pr2][pc1], s);
+      q2[ii + 2] = LUT_GET(ctm644_pattern_ch[pr2][pc2], ctm644_pattern_br[pr2][pc2], s);
+      q2[ii + 3] = LUT_GET(ctm644_pattern_ch[pr2][pc3], ctm644_pattern_br[pr2][pc3], s);
+
+      q3[ii + 0] = LUT_GET(ctm644_pattern_ch[pr3][pc0], ctm644_pattern_br[pr3][pc0], s);
+      q3[ii + 1] = LUT_GET(ctm644_pattern_ch[pr3][pc1], ctm644_pattern_br[pr3][pc1], s);
+      q3[ii + 2] = LUT_GET(ctm644_pattern_ch[pr3][pc2], ctm644_pattern_br[pr3][pc2], s);
+      q3[ii + 3] = LUT_GET(ctm644_pattern_ch[pr3][pc3], ctm644_pattern_br[pr3][pc3], s);
+    }
+
     p += nextlineSrc;
     q += nextlineDst * 4;
   }
+}
+
+void filter_ctm644(
+  Uint8 *srcPtr, Uint32 srcPitch,
+  Uint8 *dstPtr, Uint32 dstPitch,
+  int width, int height  
+) {
+    if (CPC.scr_half_res_x)
+        filter_ctm644_impl<false, CTM644_PATTERN_WIDTH_HALF, CTM644_PATTERN_WIDTH_HALF - 1>(srcPtr, srcPitch, dstPtr, dstPitch, width, height);
+    else
+        filter_ctm644_impl<true, CTM644_PATTERN_WIDTH_FULL, CTM644_PATTERN_WIDTH_FULL - 1>(srcPtr, srcPitch, dstPtr, dstPitch, width, height);
 }
 
 void ctm644_flip(video_plugin* t __attribute__((unused)))
@@ -1973,15 +2024,11 @@ SDL_Surface* ctm644_init(video_plugin* t, int scale, bool fs)
   init_ctm644_lut();
 
   if (CPC.scr_half_res_x) {
-      ctm644_pattern_width = CTM644_PATTERN_WIDTH_HALF;
       ctm644_pattern_ch = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_CH_HALF);
       ctm644_pattern_br = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_BR_HALF);
-      smear = smear_halfres;
   } else {
-      ctm644_pattern_width = CTM644_PATTERN_WIDTH_FULL;
       ctm644_pattern_ch = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_CH_FULL);
       ctm644_pattern_br = const_cast<Uint8 (*)[12]> (CTM644_PATTERN_BR_FULL);
-      smear = smear_fullres;
   }
 
   return swscale_init(t, scale, fs);
