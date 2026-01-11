@@ -93,7 +93,6 @@ video_plugin* vid_plugin;
 SDL_Joystick* joysticks[MAX_NB_JOYSTICKS];
 std::list<DevTools> devtools;
 
-dword dwTicks, dwTicksOffset, dwTicksTarget, dwTicksTargetFPS;
 dword dwFPS, dwFrameCount;
 dword dwXScale, dwYScale;
 dword dwSndBufferCopied;
@@ -362,26 +361,28 @@ void ga_memory_manager ()
 
 // - Synchronization ---------------------
 
-static uint64_t gPerfFreq = 0;           // ticks per second
-static uint64_t gPerfOffset = 0;         // ticks between "cycle-count" wakeups
-static uint64_t gPerfTarget = 0;         // next "cycle-count" deadline in perf ticks
-static uint64_t gPerfTargetFPS = 0;      // next FPS counter update time in perf ticks
-static uint64_t gPerfBase = 0;           // floor(freq/50)
-static uint64_t gPerfRem  = 0;           // freq%50
-static uint64_t gPerfErr  = 0;           // accumulator
+// Performance counter variables for sound off synchronization
+static uint64_t perfFreq = 0;           // ticks per second
+static uint64_t perfOffset = 0;         // ticks between "cycle-count" wakeups
+static uint64_t perfTarget = 0;         // next "cycle-count" deadline in perf ticks
+static uint64_t perfTargetFPS = 0;      // next FPS counter update time in perf ticks
+static uint64_t perfBase = 0;           // floor(freq/50)
+static uint64_t perfRem  = 0;           // freq%50
+static uint64_t perfErr  = 0;           // accumulator
 
-static SDL_sem* gAudioSem = nullptr;
+// Audio synchronization semaphore
+static SDL_sem* audioSem = nullptr;
 
 static inline uint64_t perf_now() {
   return SDL_GetPerformanceCounter();
 }
 
 static inline uint64_t ms_to_perf(uint64_t ms) {
-  return (ms * gPerfFreq) / 1000ULL;
+  return (ms * perfFreq) / 1000ULL;
 }
 
 static inline uint64_t perf_to_ms(uint64_t ticks) {
-  return (ticks * 1000ULL) / gPerfFreq;
+  return (ticks * 1000ULL) / perfFreq;
 }
 
 static inline void wait_until_perf(uint64_t deadline, uint64_t freq)
@@ -1465,7 +1466,7 @@ void audio_update (void *userdata __attribute__((unused)), byte *stream, int len
     }
     memcpy(stream, pSamples, len);
     dwSndBufferCopied = 1;
-    if (gAudioSem) SDL_SemPost(gAudioSem);
+    if (audioSem) SDL_SemPost(audioSem);
   } else {
     LOG_VERBOSE("Audio: audio_update: skipping the copy of " << len << " bytes: sound buffer not ready");
   }
@@ -1829,19 +1830,16 @@ void joysticks_shutdown ()
 
 void update_timings()
 {
-   // existing ms offset is fine to keep (for logs / legacy)
-   dwTicksOffset = static_cast<int>(FRAME_PERIOD_MS / (CPC.speed / CPC_BASE_FREQUENCY_MHZ));
+   perfFreq = SDL_GetPerformanceFrequency();
+   perfBase = perfFreq / 50;
+   perfRem  = perfFreq % 50;
+   perfErr  = 0;
 
-   gPerfFreq = SDL_GetPerformanceFrequency();
-   gPerfBase = gPerfFreq / 50;
-   gPerfRem  = gPerfFreq % 50;
-   gPerfErr  = 0;
+   perfTarget = perf_now() + perfBase;   // first deadline
+   perfErr = perfRem;
+   if (perfErr >= 50) { perfTarget += 1; perfErr -= 50; }
 
-   gPerfTarget = perf_now() + gPerfBase;   // first deadline
-   gPerfErr = gPerfRem;
-   if (gPerfErr >= 50) { gPerfTarget += 1; gPerfErr -= 50; }
-
-   LOG_VERBOSE("Timing: next slice in " << dwTicksOffset << " ms (perf ticks=" << gPerfOffset << ")");
+   LOG_VERBOSE("Timing: perf freq=" << perfFreq << ", perf base=" << perfBase << ", perf rem=" << perfRem);
 }
 
 // Recalculate emulation speed (to verify, seems to work reasonably well)
@@ -1952,6 +1950,7 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
    }
    CPC.scr_window = conf.getIntValue("video", "scr_window", 1) & 1;
    CPC.scr_full_screen_exclusive = conf.getIntValue("video", "scr_full_screen_exclusive", 0) & 1;
+   CPC.scr_monitor_select = conf.getIntValue("video", "scr_monitor_select", 0);
 
    CPC.scr_green_mode = conf.getIntValue("video", "scr_green_mode", 0) & 1;
    CPC.scr_green_blue_percent = conf.getIntValue("video", "scr_green_blue_percent", 0);
@@ -2046,6 +2045,7 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
    conf.setIntValue("video", "scr_remanency", CPC.scr_remanency);
    conf.setIntValue("video", "scr_window", CPC.scr_window);
    conf.setIntValue("video", "scr_full_screen_exclusive", CPC.scr_full_screen_exclusive);
+   conf.setIntValue("video", "scr_monitor_select", CPC.scr_monitor_select);
 
    conf.setIntValue("devtools", "scale", CPC.devtools_scale);
 
@@ -2894,12 +2894,12 @@ int cap32_main (int argc, char **argv)
    }
 
    SDL_SetHint(SDL_HINT_TIMER_RESOLUTION, "1");
-   gPerfFreq = SDL_GetPerformanceFrequency();
+   perfFreq = SDL_GetPerformanceFrequency();
 
-   gAudioSem = SDL_CreateSemaphore(0);
-   if (!gAudioSem) {
+   audioSem = SDL_CreateSemaphore(0);
+   if (!audioSem) {
       LOG_ERROR("SDL_CreateSemaphore failed: " << SDL_GetError());
-      // fallback: keep old behavior if needed
+      // fallback: use legacy manual limiter
    }   
 
    #ifndef APP_PATH
@@ -3328,20 +3328,20 @@ int cap32_main (int argc, char **argv)
 
       if (!CPC.paused) { // run the emulation, as long as the user doesn't pause it
          uint64_t now = perf_now();
-         if (now >= gPerfTargetFPS) {
+         if (now >= perfTargetFPS) {
             dwFPS = dwFrameCount;
             dwFrameCount = 0;
-            gPerfTargetFPS += gPerfFreq;
-            if (now - gPerfTargetFPS > 5 * gPerfFreq) gPerfTargetFPS = now + gPerfFreq;
+            perfTargetFPS += perfFreq;
+            if (now - perfTargetFPS > 5 * perfFreq) perfTargetFPS = now + perfFreq;
          }
 
          if (CPC.limit_speed) { // limit to original CPC speed?
             if (CPC.snd_enabled) {
                if (iExitCondition == EC_SOUND_BUFFER) { // Emulation filled a sound buffer.
                   if (!dwSndBufferCopied) {
-                  if (gAudioSem) {
+                  if (audioSem) {
                      // Wait until audio callback consumes/copies (timeout as safety net)
-                     SDL_SemWaitTimeout(gAudioSem, 5);
+                     SDL_SemWaitTimeout(audioSem, 5);
                   } else {
                      // Fallback if we don't have semaphore support
                      SDL_Delay(0);
@@ -3354,20 +3354,20 @@ int cap32_main (int argc, char **argv)
             } else if (iExitCondition == EC_CYCLE_COUNT) {
                uint64_t now = perf_now();
 
-               if (now < gPerfTarget) {
-                  wait_until_perf(gPerfTarget, gPerfFreq);
+               if (now < perfTarget) {
+                  wait_until_perf(perfTarget, perfFreq);
                   now = perf_now();
                }
 
-               gPerfTarget += gPerfBase;
-               gPerfErr += gPerfRem;
-               if (gPerfErr >= 50) {
-                  gPerfTarget += 1;
-                  gPerfErr -= 50;
+               perfTarget += perfBase;
+               perfErr += perfRem;
+               if (perfErr >= 50) {
+                  perfTarget += 1;
+                  perfErr -= 50;
                }
 
-               if (static_cast<int64_t> (now - gPerfTarget) >  static_cast<int64_t> (5 * gPerfOffset)) {
-                  gPerfTarget = now + gPerfOffset;
+               if (static_cast<int64_t> (now - perfTarget) >  static_cast<int64_t> (5 * perfOffset)) {
+                  perfTarget = now + perfOffset;
                }
             }
          }

@@ -224,6 +224,7 @@ class t_CPC {
    unsigned int scr_remanency;
    unsigned int scr_window;
    unsigned int scr_full_screen_exclusive;
+   unsigned int scr_monitor_select;
    unsigned int scr_bpp;        // bits per pixel of the SDL back_surface
    unsigned int scr_preserve_aspect_ratio;
    dword dwYScale;              // Y scale (i.e. number of lines in SDL back_surface per CPC line)

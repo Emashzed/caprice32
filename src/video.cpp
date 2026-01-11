@@ -101,22 +101,65 @@ int renderer_bpp(SDL_Renderer *sdl_renderer)
   return SDL_BITSPERPIXEL(infos.texture_formats[0]);
 }
 
-int video_init(int scale, bool fs) 
+int video_init(int scale, bool fs)
 {
-  Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
-  if (fs) {
-    if (CPC.scr_full_screen_exclusive) {
-      flags |= SDL_WINDOW_FULLSCREEN;
-    } else {
-      flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    }
-  } else {
-    flags |= SDL_WINDOW_SHOWN;
+  int displayIndex = CPC.scr_monitor_select;
+
+  Uint32 windowFlags = SDL_WINDOW_ALLOW_HIGHDPI;
+
+  int numDisplays = SDL_GetNumVideoDisplays();
+  if (numDisplays < 1) return 0;
+
+  if (displayIndex < 0 || displayIndex >= numDisplays) {
+    displayIndex = 0; // fallback to primary
   }
 
-  SDL_CreateWindowAndRenderer(CPC_VISIBLE_SCR_WIDTH * scale, CPC_VISIBLE_SCR_HEIGHT * scale, flags, &mainSDLWindow, &renderer);
-  if (!mainSDLWindow || !renderer) return 0;
-  SDL_SetWindowTitle(mainSDLWindow, "Caprice32 " VERSION_STRING);
+  SDL_Rect bounds;
+  if (SDL_GetDisplayBounds(displayIndex, &bounds) != 0) {
+    return 0;
+  }
+
+  Uint32 fsFlag = 0;
+  if (fs) {
+    fsFlag = CPC.scr_full_screen_exclusive ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_FULLSCREEN_DESKTOP;
+  } else {
+    windowFlags |= SDL_WINDOW_SHOWN;
+  }
+
+  const int w = CPC_VISIBLE_SCR_WIDTH  * scale;
+  const int h = CPC_VISIBLE_SCR_HEIGHT * scale;
+
+  int x = bounds.x + (bounds.w - w) / 2;
+  int y = bounds.y + (bounds.h - h) / 2;
+
+  mainSDLWindow = SDL_CreateWindow(
+      "Caprice32 " VERSION_STRING,
+      x, y,
+      w, h,
+      windowFlags
+  );
+  if (!mainSDLWindow) return 0;
+
+  renderer = SDL_CreateRenderer(
+      mainSDLWindow,
+      -1,
+      SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
+  );
+  if (!renderer) {
+    SDL_DestroyWindow(mainSDLWindow);
+    mainSDLWindow = NULL;
+    return 0;
+  }
+
+  if (fsFlag != 0) {
+    if (SDL_SetWindowFullscreen(mainSDLWindow, fsFlag) != 0) {
+      SDL_DestroyRenderer(renderer);
+      SDL_DestroyWindow(mainSDLWindow);
+      renderer = NULL;
+      mainSDLWindow = NULL;
+      return 0;
+    }
+  }
 
   return 1;
 }
