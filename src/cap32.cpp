@@ -3258,8 +3258,8 @@ int cap32_main (int argc, char **argv)
 
             case SDL_MOUSEMOTION:
             {
-              CPC.phazer_x = event.motion.x;
-              CPC.phazer_y = event.motion.y;
+              CPC.phazer_x = static_cast<int> (static_cast<float> (event.motion.x) / CPC.scale_x);
+              CPC.phazer_y = static_cast<int> (static_cast<float> (event.motion.y) / CPC.scale_y);
             }
             break;
 

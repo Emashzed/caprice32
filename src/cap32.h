@@ -208,6 +208,9 @@ class t_CPC {
    bool phazer_pressed;
    unsigned int phazer_x;
    unsigned int phazer_y;
+   float scale_x; 
+   float scale_y;
+
    int cycle_count;
    std::string resources_path;
 

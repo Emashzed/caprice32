@@ -160,6 +160,14 @@ int video_init(int scale, bool fs)
       return 0;
     }
   }
+  
+  int window_width;
+  int window_height;
+  SDL_GetWindowSize(mainSDLWindow, &window_width, &window_height);
+  int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
+  int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
+  CPC.scale_x = static_cast<float>(window_width) / static_cast<float>(surface_width);
+  CPC.scale_y = static_cast<float>(window_height) / static_cast<float>(surface_height);
 
   return 1;
 }

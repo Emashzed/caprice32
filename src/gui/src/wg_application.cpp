@@ -36,17 +36,15 @@ extern t_CPC CPC;
 // Video plugin, defined in video.h:
 extern video_plugin* vid_plugin;
 
-float scale_x, scale_y;
-
-namespace wGui
+  namespace wGui
 {
 
 static int scaleX(int x) {
-  return  static_cast<int> (static_cast<float> (x) / scale_x);
+  return  static_cast<int> (static_cast<float> (x) / CPC.scale_x);
 }
 
 static int scaleY(int y) {
-  return  static_cast<int> (static_cast<float> (y) / scale_y);
+  return  static_cast<int> (static_cast<float> (y) / CPC.scale_y);
 }
 
 bool CApplication::HandleSDLEvent(SDL_Event event)
@@ -263,16 +261,6 @@ CApplication::CApplication(SDL_Window* pWindow, std::string sFontFileName) :
 	m_pCurrentCursorResourceHandle(nullptr),
 	m_pSystemDefaultCursor(nullptr)
 {
-  int window_width;
-  int window_height;
-  SDL_GetWindowSize(pWindow, &window_width, &window_height);
-
-  int surface_width = CPC_VISIBLE_SCR_WIDTH * (2 - CPC.scr_half_res_x);
-  int surface_height = CPC_VISIBLE_SCR_HEIGHT * (2 - CPC.scr_half_res_y);
-
-  scale_x = static_cast<float>(window_width) / static_cast<float>(surface_width);
-  scale_y = static_cast<float>(window_height) / static_cast<float>(surface_height);
-
   m_pMessageServer = std::make_unique<CMessageServer>();
 
 	// judb
