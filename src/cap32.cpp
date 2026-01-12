@@ -129,6 +129,11 @@ t_MemBankConfig membank_config;
 FILE *pfileObject;
 FILE *pfoPrinter;
 
+int mouse_x = 0;
+int mouse_y = 0;
+bool mouse_btn1 = false;
+bool mouse_btn2 = false;
+
 #ifdef DEBUG
 dword dwDebugFlag = 0;
 FILE *pfoDebug = nullptr;
@@ -501,6 +506,16 @@ byte z80_IN_handler (reg_pair port)
             ret_val = fdc_read_data();
          }
       }
+   }
+// --Kempston Mouse------------------------------------------------------------
+   if (port.d == 0x0FBEE) {
+      ret_val= (mouse_x * (CPC.scr_half_res_x ? 2 : 1)) & 0xFF;
+   }
+   else if (port.d == 0x0FBEF) {
+      ret_val= 0xFF - ((mouse_y * (CPC.scr_half_res_y ? 2 : 1)) & 0xFF);
+   }
+   else if (port.d == 0x0FAEF) {
+      ret_val = (static_cast<byte>((mouse_btn1 ? 0 : 1) | (mouse_btn2 ? 0 : 2)));
    }
    LOG_DEBUG("IN on port " << std::hex << static_cast<int>(port.w.l) << ", ret_val=" << static_cast<int>(ret_val) << std::dec);
    return ret_val;
@@ -3260,6 +3275,9 @@ int cap32_main (int argc, char **argv)
             {
               CPC.phazer_x = static_cast<int> (static_cast<float> (event.motion.x) / CPC.scale_x);
               CPC.phazer_y = static_cast<int> (static_cast<float> (event.motion.y) / CPC.scale_y);
+
+              mouse_x = CPC.phazer_x;
+              mouse_y = CPC.phazer_y;
             }
             break;
 
@@ -3274,6 +3292,14 @@ int cap32_main (int argc, char **argv)
                 }
                 CPC.phazer_pressed = true;
               }
+              switch (event.button.button) {
+                case SDL_BUTTON_LEFT:
+                  mouse_btn1 = true;
+                  break;
+                case SDL_BUTTON_RIGHT:
+                  mouse_btn2 = true;
+                  break;
+              }
             }
             break;
 
@@ -3285,6 +3311,14 @@ int cap32_main (int argc, char **argv)
                   applyKeypress(scancode, keyboard_matrix, false);
                 }
                 CPC.phazer_pressed = false;
+              }
+              switch (event.button.button) {
+                case SDL_BUTTON_LEFT:
+                  mouse_btn1 = false;
+                  break;
+                case SDL_BUTTON_RIGHT:
+                  mouse_btn2 = false;
+                  break;
               }
             }
             break;
