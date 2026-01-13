@@ -6,6 +6,7 @@
 /wGui.log
 /tags
 /.debug
+/m4
 /googletest
 /test_runner
 /disk

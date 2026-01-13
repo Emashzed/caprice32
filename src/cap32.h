@@ -199,6 +199,7 @@ class t_CPC {
    unsigned int printer;
    unsigned int printer_port;
    unsigned int mf2;
+   unsigned int m4;
    unsigned int keyboard;
    unsigned int joystick_emulation;
    unsigned int joysticks;
@@ -286,6 +287,8 @@ class t_CPC {
    std::string rom_path;
    std::string rom_file[16];
    std::string rom_mf2;
+   std::string rom_m4;
+   std::string m4_path;
 
    std::string current_snap_path; // Last used snapshot path in the file dialog.
    std::string current_cart_path; // Last used cartridge path in the file dialog.

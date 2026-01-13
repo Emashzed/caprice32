@@ -47,6 +47,7 @@
 #include "argparse.h"
 #include "slotshandler.h"
 #include "fileutils.h"
+#include "m4.h"
 
 #include <errno.h>
 #include <cstring>
@@ -364,6 +365,7 @@ void ga_memory_manager ()
    }
 }
 
+
 // - Synchronization ---------------------
 
 // Performance counter variables for sound off synchronization
@@ -516,6 +518,15 @@ byte z80_IN_handler (reg_pair port)
    }
    else if (port.d == 0x0FAEF) {
       ret_val = (static_cast<byte>((mouse_btn1 ? 0 : 1) | (mouse_btn2 ? 0 : 2)));
+   }
+// --M4 board------------------------------------------------------------------
+   if (CPC.m4) {
+      if (port.d == 0xFE00) {
+         LOG_INFO("M4 data port read");
+      }
+      if (port.d == 0xFC00) {
+         LOG_INFO("M4 ack port read");
+      }
    }
    LOG_DEBUG("IN on port " << std::hex << static_cast<int>(port.w.l) << ", ret_val=" << static_cast<int>(ret_val) << std::dec);
    return ret_val;
@@ -785,7 +796,6 @@ void z80_OUT_handler (reg_pair port, byte val)
          }
       } else {
          uint32_t page = 1; // Default to basic page
-         LOG_DEBUG("ROM select: " << static_cast<int>(val));
          if (val == 7) {
             page = 3;
          } else if (val >= 128) {
@@ -898,9 +908,16 @@ void z80_OUT_handler (reg_pair port, byte val)
          ga_memory_manager();
       }
    }
+// --M4 board------------------------------------------------------------------
+   if (CPC.m4) {
+      if (port.d == 0xFE00) {
+         m4_write_command(val);
+      }
+      if (port.d == 0xFC00) {
+         m4_run_command();
+      }
+   }
 }
-
-
 
 void print (byte *pbAddr, const char *pchStr, bool bolColour)
 {
@@ -1304,6 +1321,10 @@ int emulator_init ()
       }
    }
 
+   if (CPC.m4) { // M4 board enabled?
+      m4_init();
+   }
+
    emulator_reset();
    CPC.paused = false;
 
@@ -1329,6 +1350,10 @@ void emulator_shutdown ()
    delete [] pbROM;
    delete [] pbRAMbuffer;
    delete [] pbGPBuffer;
+
+   if (CPC.m4) { // M4 board enabled?
+      m4_close();
+   }
 }
 
 
@@ -1928,6 +1953,8 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
    CPC.boot_time = conf.getIntValue("system", "boot_time", 5);
    CPC.printer = conf.getIntValue("system", "printer", 0) & 1;
    CPC.mf2 = conf.getIntValue("system", "mf2", 0) & 1;
+   CPC.m4 = conf.getIntValue("system", "m4", 0) & 1;
+   CPC.m4_path = conf.getStringValue("system", "m4_path", appPath + "/m4");
    CPC.keyboard = conf.getIntValue("system", "keyboard", 0);
    if (CPC.keyboard > MAX_ROM_MODS) {
       CPC.keyboard = 0;
@@ -2019,6 +2046,7 @@ void loadConfiguration (t_CPC &CPC, const std::string& configFilename)
       CPC.rom_file[iRomNum] = conf.getStringValue("rom", chRomId, "");
    }
    CPC.rom_mf2 = conf.getStringValue("rom", "rom_mf2", "");
+   CPC.rom_m4 = conf.getStringValue("rom", "rom_m4", "");
 
    CPC.cartridge.file = CPC.rom_path + "/system.cpr"; // Only default path defined. Needed for CPC6128+
 }
@@ -2038,6 +2066,8 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
    conf.setIntValue("system", "auto_pause", CPC.auto_pause);
    conf.setIntValue("system", "printer", CPC.printer);
    conf.setIntValue("system", "mf2", CPC.mf2);
+   conf.setIntValue("system", "m4", CPC.m4);
+   conf.setStringValue("system", "m4_path", CPC.m4_path);
    conf.setIntValue("system", "keyboard", CPC.keyboard);
    conf.setIntValue("system", "boot_time", CPC.boot_time);
    conf.setIntValue("system", "joystick_emulation", CPC.joystick_emulation);
@@ -2098,6 +2128,7 @@ bool saveConfiguration (t_CPC &CPC, const std::string& configFilename)
       conf.setStringValue("rom", chRomId, CPC.rom_file[iRomNum]);
    }
    conf.setStringValue("rom", "rom_mf2", CPC.rom_mf2);
+   conf.setStringValue("rom", "rom_m4", CPC.rom_m4);
 
    return conf.saveToFile(configFilename);
 }
