@@ -116,6 +116,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x10 | MOD_CPC_CTRL,    // CPC_CTRL_LEFT
     0x01 | MOD_CPC_CTRL,    // CPC_CTRL_RIGHT
     0x06 | MOD_CPC_CTRL,    // CPC_CTRL_ENTER
+    0x84 | MOD_CPC_CTRL,    // CPC_CTRL_TAB
     0x60 | MOD_CPC_SHIFT,   // CPC_AMPERSAND
     0x35 | MOD_CPC_SHIFT,   // CPC_ASTERISK
     0x32,                   // CPC_AT
@@ -328,6 +329,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x10 | MOD_CPC_CTRL,    // CPC_CTRL_LEFT
     0x01 | MOD_CPC_CTRL,    // CPC_CTRL_RIGHT
     0x06 | MOD_CPC_CTRL,    // CPC_CTRL_ENTER
+    0x84 | MOD_CPC_CTRL,    // CPC_CTRL_TAB
     0x80,                   // CPC_AMPERSAND
     0x21,                   // CPC_ASTERISK
     0x26 | MOD_CPC_SHIFT,   // CPC_AT
@@ -540,6 +542,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x10 | MOD_CPC_CTRL,    // CPC_CTRL_LEFT
     0x01 | MOD_CPC_CTRL,    // CPC_CTRL_RIGHT
     0x06 | MOD_CPC_CTRL,    // CPC_CTRL_ENTER
+    0x84 | MOD_CPC_CTRL,    // CPC_CTRL_TAB
     0x60 | MOD_CPC_SHIFT,   // CPC_AMPERSAND
     0x21 | MOD_CPC_SHIFT,   // CPC_ASTERISK
     0x32,                   // CPC_AT
@@ -859,6 +862,7 @@ std::map<CapriceKey, PCKey> InputMapper::SDLkeysymFromCPCkeys_us = {
   { CPC_CTRL_LEFT,   SDLK_LEFT | MOD_PC_CTRL },
   { CPC_CTRL_RIGHT,  SDLK_RIGHT | MOD_PC_CTRL },
   { CPC_CTRL_ENTER,  SDLK_KP_ENTER | MOD_PC_CTRL },
+  { CPC_CTRL_TAB,    SDLK_TAB | MOD_PC_CTRL },
   { CPC_AMPERSAND,   SDLK_7 | MOD_PC_SHIFT },
   { CPC_ASTERISK,    SDLK_8 | MOD_PC_SHIFT },
   { CPC_AT,          SDLK_2 | MOD_PC_SHIFT },
@@ -1072,6 +1076,7 @@ const std::map<const std::string, const CapriceKey> InputMapper::CPCkeysFromStri
    {"CPC_CTRL_LEFT",   CPC_CTRL_LEFT},
    {"CPC_CTRL_RIGHT",  CPC_CTRL_RIGHT},
    {"CPC_CTRL_ENTER",  CPC_CTRL_ENTER},
+   {"CPC_CTRL_TAB",    CPC_CTRL_TAB},
    {"CPC_AMPERSAND",   CPC_AMPERSAND},
    {"CPC_ASTERISK",    CPC_ASTERISK},
    {"CPC_AT",          CPC_AT},
