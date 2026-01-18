@@ -179,6 +179,7 @@ typedef enum {
    CPC_ENTER,
    CPC_EQUAL,
    CPC_ESC,
+   CPC_CTRL_SHIFT_ESC,
    CPC_EXCLAMATN,
    CPC_F0,
    CPC_F1,
@@ -259,7 +260,7 @@ typedef enum {
    CPC_FR_uGRAVE
 } CPC_KEYS;
 
-#define CPC_KEY_NUM 211    // Number of different keys on a CPC keyboard
+#define CPC_KEY_NUM 212    // Number of different keys on a CPC keyboard
 #define CPC_KEYBOARD_NUM 3 // Number of different keyboards supported.
 
 // PCKey represents a key combination pressed on the host keyboard.

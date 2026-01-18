@@ -146,6 +146,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x06,                   // CPC_ENTER
     0x31 | MOD_CPC_SHIFT,   // CPC_EQUAL
     0x82,                   // CPC_ESC
+    0x82 | MOD_CPC_SHIFT | MOD_CPC_CTRL, // CPC_CTRL_SHIFT_ESC
     0x80 | MOD_CPC_SHIFT,   // CPC_EXCLAMATN
     0x17,                   // CPC_F0
     0x15,                   // CPC_F1
@@ -359,6 +360,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x06,                   // CPC_ENTER
     0x36,                   // CPC_EQUAL
     0x82,                   // CPC_ESC
+    0x82 | MOD_CPC_SHIFT | MOD_CPC_CTRL, // CPC_CTRL_SHIFT_ESC
     0x50,                   // CPC_EXCLAMATN
     0x17,                   // CPC_F0
     0x15,                   // CPC_F1
@@ -572,6 +574,7 @@ const CPCScancode InputMapper::cpc_kbd[CPC_KEYBOARD_NUM][CPC_KEY_NUM] = {
     0x06,                   // CPC_ENTER
     0x31 | MOD_CPC_SHIFT,   // CPC_EQUAL
     0x82,                   // CPC_ESC
+    0x82 | MOD_CPC_SHIFT | MOD_CPC_CTRL, // CPC_CTRL_SHIFT_ESC
     0x80 | MOD_CPC_SHIFT,   // CPC_EXCLAMATN
     0x17,                   // CPC_F0
     0x15,                   // CPC_F1
@@ -892,6 +895,7 @@ std::map<CapriceKey, PCKey> InputMapper::SDLkeysymFromCPCkeys_us = {
   { CPC_ENTER,       SDLK_KP_ENTER },
   { CPC_EQUAL,       SDLK_EQUALS },
   { CPC_ESC,         SDLK_ESCAPE },
+  { CPC_CTRL_SHIFT_ESC, SDLK_PAUSE | MOD_PC_CTRL },
   { CPC_EXCLAMATN,   SDLK_1 | MOD_PC_SHIFT },
   { CPC_F0,          SDLK_KP_0 },
   { CPC_F1,          SDLK_KP_1 },
@@ -1106,6 +1110,7 @@ const std::map<const std::string, const CapriceKey> InputMapper::CPCkeysFromStri
    {"CPC_ENTER",       CPC_ENTER},
    {"CPC_EQUAL",       CPC_EQUAL},
    {"CPC_ESC",         CPC_ESC},
+   {"CPC_CTRL_SHIFT_ESC", CPC_CTRL_SHIFT_ESC},
    {"CPC_EXCLAMATN",   CPC_EXCLAMATN},
    {"CPC_F0",          CPC_F0},
    {"CPC_F1",          CPC_F1},
